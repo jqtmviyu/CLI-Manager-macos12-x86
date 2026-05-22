@@ -11,9 +11,6 @@ import { useSettingsStore, type LightThemePalette, type DarkThemePalette } from 
 
 const FONT_SIZE_MIN = 8;
 const FONT_SIZE_MAX = 32;
-// 模块级单例：每帧每会话都 new TextDecoder 在高吞吐场景下会成为 GC 热点，
-// 而 TextDecoder 本身是无状态可复用的（fatal=false, ignoreBOM=false 都是默认值）。
-const SHARED_TEXT_DECODER = new TextDecoder("utf-8");
 import { toast } from "sonner";
 import { logError } from "../lib/logger";
 
@@ -119,6 +116,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     let webglAddon: WebglAddon | null = null;
     try {
       webglAddon = new WebglAddon();
+      // GPU 上下文丢失（驱动崩溃 / GPU 进程重启 / 长会话）后 WebGL 渲染会僵死。
+      // 注册 contextLoss 回调，丢失时 dispose 让 xterm 自动回落到 Canvas 渲染器。
+      webglAddon.onContextLoss(() => {
+        webglAddon?.dispose();
+        webglAddon = null;
+      });
       terminal.loadAddon(webglAddon);
     } catch {
       // WebGL not supported, fall back to canvas
@@ -206,6 +209,14 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     });
 
+    // Per-session TextDecoder with stream mode：
+    // 跨 chunk 的多字节 UTF-8 必须使用 streaming decode，否则截断的 head/tail
+    // 字节会被解码为 U+FFFD + 残字节，残字节进入 xterm 后会污染 SGR 解析状态
+    // （表现为背景色串列、左侧异常红色竖条）。后端虽已保证字节边界对齐
+    // （src-tauri/src/pty/boundary.rs），前端 stream 模式作为双重防御。
+    // 不使用模块级共享 decoder：stream 模式会保留状态，跨会话共享会导致污染。
+    const textDecoder = new TextDecoder("utf-8");
+
     // Listen for PTY output (Base64 encoded to preserve control characters)
     // Batch chunks per animation frame to keep main thread responsive on high-throughput output.
     let unlisten: UnlistenFn | null = null;
@@ -223,7 +234,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (cancelled) return;
       const binaryString = atob(event.payload);
       const bytes = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
-      const text = SHARED_TEXT_DECODER.decode(bytes);
+      const text = textDecoder.decode(bytes, { stream: true });
       if (isActiveRef.current) {
         pendingChunks.push(text);
         if (writeRafId === null) {

@@ -9,6 +9,8 @@ use log::{debug, error, info};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
+use crate::pty::boundary::safe_emit_boundary;
+
 /// Reader 累积阈值：达到该阈值或下游显式没有更多数据时才 emit，避免高吞吐时
 /// 每次 read 都触发一次 IPC + Base64 编码。
 const READER_FLUSH_THRESHOLD: usize = 32 * 1024;
@@ -136,15 +138,30 @@ impl PtyManager {
                         // 反之或累计已超阈值就立即 emit，避免延迟。
                         let likely_more = n == buf.len();
                         if !likely_more || pending.len() >= READER_FLUSH_THRESHOLD {
-                            let encoded = STANDARD.encode(&pending);
-                            let _ = app_handle.emit(&output_event, encoded);
-                            pending.clear();
+                            // 关键：仅 emit 处于 UTF-8 + ANSI 序列边界的安全前缀，
+                            // 残尾保留到下一轮拼接，避免前端 xterm 把残字节解读为 SGR 参数。
+                            let safe = safe_emit_boundary(&pending);
+                            if safe > 0 {
+                                let encoded = STANDARD.encode(&pending[..safe]);
+                                let _ = app_handle.emit(&output_event, encoded);
+                                pending.drain(..safe);
+                            } else if pending.len() > READER_FLUSH_THRESHOLD * 8 {
+                                // 极端兜底：未终结序列超 256KB（远大于任何正常 OSC/CSI），
+                                // 说明源端格式异常，强制 emit 避免内存无限增长。
+                                debug!(
+                                    "pty pending buffer overflowed boundary protection: id={}, len={}",
+                                    session_id_owned, pending.len()
+                                );
+                                let encoded = STANDARD.encode(&pending);
+                                let _ = app_handle.emit(&output_event, encoded);
+                                pending.clear();
+                            }
                         }
                     }
                     Err(_) => break,
                 }
             }
-            // 进程退出，把剩余数据发出去
+            // 进程退出，把剩余数据全部发出去（不再保护边界，最后一帧）
             if !pending.is_empty() {
                 let encoded = STANDARD.encode(&pending);
                 let _ = app_handle.emit(&output_event, encoded);
