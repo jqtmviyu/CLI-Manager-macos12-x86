@@ -35,7 +35,7 @@ const IN_TAURI = isTauri();
 const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
 let claudeHookToastSequence = 0;
 
-type ClaudeHookToastVariant = "approval" | "finished" | "failed";
+type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
 
 interface ClaudeHookToastStyle {
   variant: ClaudeHookToastVariant;
@@ -64,7 +64,10 @@ function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle 
   if (payload.event === "StopFailure") {
     return { variant: "failed", icon: AlertTriangle, eyebrow: "执行失败", actionLabel: "查看" };
   }
-  return { variant: "approval", icon: AlertTriangle, eyebrow: "需要处理", actionLabel: "去处理" };
+  if (payload.event === "PermissionRequest") {
+    return { variant: "approval", icon: AlertTriangle, eyebrow: "需要审批", actionLabel: "去处理" };
+  }
+  return { variant: "attention", icon: AlertTriangle, eyebrow: "提醒", actionLabel: "查看" };
 }
 
 function getCliHookSourceName(payload: CliHookPayload): string {
@@ -76,7 +79,8 @@ function getClaudeHookToastTitle(payload: CliHookPayload, tabTitle: string): str
   const sourceName = getCliHookSourceName(payload);
   if (payload.event === "Stop") return `${tabTitle} 已完成`;
   if (payload.event === "StopFailure") return `${tabTitle} 执行失败`;
-  return `${sourceName} 需要处理`;
+  if (payload.event === "PermissionRequest") return `${sourceName} 需要审批`;
+  return `${sourceName} 提醒`;
 }
 
 function showClaudeHookToast(payload: CliHookPayload, tabId: string): void {

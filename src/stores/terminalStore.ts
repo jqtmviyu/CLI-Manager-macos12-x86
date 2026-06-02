@@ -79,6 +79,7 @@ interface TerminalStore {
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  markAttentionInputHandled: (sessionId: string) => void;
   handleCliHookEvent: (payload: CliHookPayload) => string | null;
   handleShellRuntimeEvent: (payload: ShellRuntimePayload) => string | null;
   reorderSessions: (fromId: string, toId: string) => void;
@@ -127,11 +128,12 @@ function logTerminalExitStatus(session: TerminalSession, payload: PtyStatusPaylo
   });
 }
 
-function mapCliHookEvent(event: CliHookEventName): TabNotificationState {
+function mapCliHookEvent(event: CliHookEventName): TabNotificationState | null {
   if (event === "UserPromptSubmit") return "running";
-  if (event === "Notification" || event === "PermissionRequest") return "attention";
+  if (event === "PermissionRequest") return "attention";
   if (event === "StopFailure") return "failed";
-  return "done";
+  if (event === "Stop") return "done";
+  return null;
 }
 
 function mapShellRuntimeEvent(event: ShellRuntimeEventName, exitCode?: number | null): TabNotificationState {
@@ -192,35 +194,6 @@ function buildTabStatusUpdate(
       ...state.tabStatusDetails,
       [sessionId]: getTabStatusDetails(next),
     },
-  };
-}
-
-function buildTabStatusClear(
-  state: Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails">,
-  sessionId: string,
-  source?: TabStatusSourceName
-): Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails"> {
-  const current = state.tabStatuses[sessionId];
-  if (!current) return state;
-  const next: TabStatusSources = { ...current };
-  if (!source || source === "hook") {
-    delete next.hook;
-    delete next.hookUpdatedAt;
-  }
-  if (!source || source === "shell") {
-    delete next.shell;
-    delete next.shellUpdatedAt;
-  }
-  if (!next.hook && !next.shell) {
-    const { [sessionId]: _, ...restStatuses } = state.tabStatuses;
-    const { [sessionId]: __, ...restNotifications } = state.tabNotifications;
-    const { [sessionId]: ___, ...restDetails } = state.tabStatusDetails;
-    return { tabStatuses: restStatuses, tabNotifications: restNotifications, tabStatusDetails: restDetails };
-  }
-  return {
-    tabStatuses: { ...state.tabStatuses, [sessionId]: next },
-    tabNotifications: { ...state.tabNotifications, [sessionId]: getTabStatusEntry(next) },
-    tabStatusDetails: { ...state.tabStatusDetails, [sessionId]: getTabStatusDetails(next) },
   };
 }
 
@@ -401,19 +374,37 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   },
 
   setActive: (id) => {
-    const notifications = get().tabNotifications;
-    set((state) => ({
-      activeSessionId: id,
-      ...(notifications[id] === "attention" ? buildTabStatusClear(state, id, "hook") : {}),
-    }));
+    set({ activeSessionId: id });
     scheduleSaveActiveId(id);
+  },
+
+  markAttentionInputHandled: (sessionId) => {
+    const tabId = resolvePrimaryTabId(sessionId, get().splits);
+    if (get().tabStatuses[tabId]?.hook !== "attention") return;
+    set((state) => buildTabStatusUpdate(state, tabId, "hook", "running", new Date().toISOString()));
   },
 
   handleCliHookEvent: (payload) => {
     const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
     if (!get().sessions.some((session) => session.id === tabId)) return null;
     const updatedAt = payload.timestamp ?? new Date().toISOString();
-    set((state) => buildTabStatusUpdate(state, tabId, "hook", mapCliHookEvent(payload.event), updatedAt));
+    const status = mapCliHookEvent(payload.event);
+    if (!status) return tabId;
+    set((state) => {
+      const next = buildTabStatusUpdate(state, tabId, "hook", status, updatedAt);
+      if (status !== "done" && status !== "failed") return next;
+
+      const tabStatus = next.tabStatuses[tabId];
+      if (!tabStatus?.shell) return next;
+      const resolved: TabStatusSources = { ...tabStatus };
+      delete resolved.shell;
+      delete resolved.shellUpdatedAt;
+      return {
+        tabStatuses: { ...next.tabStatuses, [tabId]: resolved },
+        tabNotifications: { ...next.tabNotifications, [tabId]: getTabStatusEntry(resolved) },
+        tabStatusDetails: { ...next.tabStatusDetails, [tabId]: getTabStatusDetails(resolved) },
+      };
+    });
     return tabId;
   },
 

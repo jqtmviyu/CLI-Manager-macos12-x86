@@ -301,9 +301,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     const normalizePastedInput = (text: string) => text.replace(/\r\n?/g, "\n");
 
+    const markAttentionInputHandled = () => useTerminalStore.getState().markAttentionInputHandled(sessionId);
+
     const writePastedInput = (text: string) => {
       const data = normalizePastedInput(text);
       if (!data) return;
+      markAttentionInputHandled();
       inputBuffer.current += data;
       invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("paste", err));
     };
@@ -329,6 +332,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
           (shortcut === "Alt+Enter" && e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey);
         if (matched) {
           e.preventDefault();
+          markAttentionInputHandled();
           invoke("pty_write", { sessionId, data: "\n" }).catch((err) => reportPtyWriteError("newline", err));
           return false;
         }
@@ -358,6 +362,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     const getProjectId = () => useTerminalStore.getState().sessions.find((s) => s.id === sessionId)?.projectId ?? null;
 
     terminal.onData((data) => {
+      markAttentionInputHandled();
       invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("onData", err));
 
       if (data === "\r") {
