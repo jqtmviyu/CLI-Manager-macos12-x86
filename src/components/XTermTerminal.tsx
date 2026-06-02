@@ -8,7 +8,7 @@ import { useShallow } from "zustand/shallow";
 import { applyTransparency, getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { useCommandHistoryStore } from "../stores/commandHistoryStore";
-import { useTerminalStore } from "../stores/terminalStore";
+import { useTerminalStore, type ShellRuntimeEventName } from "../stores/terminalStore";
 import { useSettingsStore, type LightThemePalette, type DarkThemePalette } from "../stores/settingsStore";
 
 const FONT_SIZE_MIN = 8;
@@ -42,6 +42,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const inactiveBufferSizeRef = useRef(0);
   const cursorShowTimerRef = useRef<number | null>(null);
   const INACTIVE_BUFFER_MAX = 256 * 1024;
+  const runtimeOscBufferRef = useRef("");
 
   const background = useSettingsStore(
     useShallow((s) => ({
@@ -118,6 +119,54 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       cursorShowTimerRef.current = null;
       terminalRef.current?.write("\x1b[?25h");
     }, 80);
+  };
+
+  const handleShellRuntimeOsc = (marker: string) => {
+    const body = marker.slice("\x1b]777;cli-manager;".length, -1);
+    const fields = Object.fromEntries(body.split(";").map((part) => {
+      const separator = part.indexOf("=");
+      return separator < 0 ? [part, ""] : [part.slice(0, separator), part.slice(separator + 1)];
+    }));
+    if (fields.session !== sessionId) return;
+    const eventName = fields.event;
+    if (eventName !== "command_started" && eventName !== "command_finished" && eventName !== "prompt_shown") return;
+    const exitCode = fields.exit !== undefined && fields.exit !== "" ? Number(fields.exit) : null;
+    useTerminalStore.getState().handleShellRuntimeEvent({
+      sessionId,
+      event: eventName as ShellRuntimeEventName,
+      exitCode: Number.isFinite(exitCode) ? exitCode : null,
+    });
+  };
+
+  const stripShellRuntimeOsc = (text: string) => {
+    const combined = runtimeOscBufferRef.current + text;
+    runtimeOscBufferRef.current = "";
+    let output = "";
+    let cursor = 0;
+
+    while (cursor < combined.length) {
+      const start = combined.indexOf("\x1b]777;cli-manager;", cursor);
+      if (start < 0) {
+        output += combined.slice(cursor);
+        break;
+      }
+
+      output += combined.slice(cursor, start);
+      const end = combined.indexOf("\x07", start);
+      if (end < 0) {
+        runtimeOscBufferRef.current = combined.slice(start);
+        break;
+      }
+
+      handleShellRuntimeOsc(combined.slice(start, end + 1));
+      cursor = end + 1;
+    }
+
+    if (runtimeOscBufferRef.current.length > 8192) {
+      runtimeOscBufferRef.current = "";
+    }
+
+    return output;
   };
 
   const processCursorVisibility = (text: string) => {
@@ -296,6 +345,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         const cmd = inputBuffer.current;
         if (cmd.trim()) {
           addCommand(getProjectId(), cmd);
+          useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event: "command_started" });
         }
         inputBuffer.current = "";
       } else if (data === "\x7f" || data === "\b") {
@@ -371,7 +421,8 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       for (let i = 0; i < binaryString.length; i += 1) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      const text = textDecoder.decode(bytes, { stream: true });
+      const text = stripShellRuntimeOsc(textDecoder.decode(bytes, { stream: true }));
+      if (!text) return;
       if (isActiveRef.current) {
         pendingChunks.push(text);
         if (writeRafId === null) {

@@ -13,12 +13,15 @@ interface ToolHookSettingsStatus {
   configDir: string | null;
   hooksDir: string | null;
   configPath: string | null;
+  featureConfigPath: string | null;
   status: HookInstallStatus;
   attentionScriptInstalled: boolean;
   finishedScriptInstalled: boolean;
+  runningHookInstalled: boolean;
   attentionHookInstalled: boolean;
   stopHookInstalled: boolean;
   failureHookInstalled: boolean;
+  hooksFeatureInstalled: boolean;
 }
 
 interface HookSettingsStatus {
@@ -253,8 +256,10 @@ export function HookSettingsPage() {
   const codex = status?.codex;
   const claudeStatus = claude?.status ?? "directoryMissing";
   const codexStatus = codex?.status ?? "directoryMissing";
+  const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
   const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
   const claudeFinishedInstalled = Boolean(claude?.finishedScriptInstalled && claude.stopHookInstalled && claude.failureHookInstalled);
+  const codexRunningInstalled = Boolean(codex?.attentionScriptInstalled && codex.runningHookInstalled);
   const codexAttentionInstalled = Boolean(codex?.attentionScriptInstalled && codex.attentionHookInstalled);
   const codexFinishedInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
 
@@ -315,7 +320,7 @@ export function HookSettingsPage() {
             <div>
               <CardTitle>Claude Code Hook 桥接</CardTitle>
               <CardDescription className="mt-1">
-                安装两个独立 PowerShell 脚本，把 Claude Code Hook 事件转发到 CLI-Manager 终端标签。
+                Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
               </CardDescription>
             </div>
             <StatusPill status={claudeStatus} />
@@ -328,9 +333,10 @@ export function HookSettingsPage() {
             <PathRow label="settings.json" value={claude?.configPath ?? null} />
           </div>
 
-          <div className="grid gap-2 md:grid-cols-2">
-            <CheckRow label="Notification 脚本" checked={claudeAttentionInstalled} />
-            <CheckRow label="Stop / StopFailure 脚本" checked={claudeFinishedInstalled} />
+          <div className="grid gap-2 md:grid-cols-3">
+            <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={claudeRunningInstalled} />
+            <CheckRow label="待审批 Hook（Notification）" checked={claudeAttentionInstalled} />
+            <CheckRow label="完成/异常 Hook（Stop / StopFailure）" checked={claudeFinishedInstalled} />
           </div>
 
           <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 text-xs leading-5 text-on-surface-variant">
@@ -363,22 +369,25 @@ export function HookSettingsPage() {
             <div>
               <CardTitle>Codex CLI Hook 桥接</CardTitle>
               <CardDescription className="mt-1">
-                安装 Codex CLI 的 Stop 和 PermissionRequest 通知脚本，用于任务完成和需要处理提醒。
+                Codex 的运行中、待审批和完成状态通过 Hook 脚本上报；普通 shell 命令由通用 Shell 运行监控补充。
               </CardDescription>
             </div>
             <StatusPill status={codexStatus} />
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <PathRow label="Codex 配置目录" value={codex?.configDir ?? codexSelectedDir} />
             <PathRow label="hooks 目录" value={codex?.hooksDir ?? null} />
             <PathRow label="hooks.json" value={codex?.configPath ?? null} />
+            <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
           </div>
 
-          <div className="grid gap-2 md:grid-cols-2">
-            <CheckRow label="PermissionRequest 脚本" checked={codexAttentionInstalled} />
-            <CheckRow label="Stop 脚本" checked={codexFinishedInstalled} />
+          <div className="grid gap-2 md:grid-cols-4">
+            <CheckRow label="运行中 Hook（UserPromptSubmit）" checked={codexRunningInstalled} />
+            <CheckRow label="待审批 Hook（PermissionRequest）" checked={codexAttentionInstalled} />
+            <CheckRow label="完成 Hook（Stop）" checked={codexFinishedInstalled} />
+            <CheckRow label="Hooks 功能（[features].hooks）" checked={Boolean(codex?.hooksFeatureInstalled)} />
           </div>
 
           <div className="rounded-lg border border-border bg-surface-container-low px-3 py-2 text-xs leading-5 text-on-surface-variant">

@@ -1,3 +1,6 @@
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use log::{debug, error, info};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -5,9 +8,6 @@ use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use tauri::{AppHandle, Emitter};
-use log::{debug, error, info};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 
 use crate::pty::boundary::safe_emit_boundary;
 
@@ -55,14 +55,68 @@ impl PtyManager {
         }
     }
 
-    fn resolve_shell(shell: &str) -> (&'static str, Option<&'static str>) {
+    fn resolve_shell(shell: &str) -> (&'static str, Vec<String>) {
         match shell {
-            "cmd" => ("cmd.exe", Some("/Q")),
-            "pwsh" => ("pwsh.exe", Some("-NoLogo")),
-            "wsl" => ("wsl.exe", None),
-            "bash" => ("bash.exe", None),
-            _ => ("powershell.exe", Some("-NoLogo")),
+            "cmd" => ("cmd.exe", vec!["/Q".to_string()]),
+            "pwsh" => ("pwsh.exe", vec!["-NoLogo".to_string()]),
+            "wsl" => ("wsl.exe", Vec::new()),
+            "bash" => ("bash.exe", Vec::new()),
+            _ => ("powershell.exe", vec!["-NoLogo".to_string()]),
         }
+    }
+
+    fn shell_runtime_monitoring_enabled(env_vars: Option<&HashMap<String, String>>) -> bool {
+        env_vars
+            .and_then(|vars| vars.get("CLI_MANAGER_SHELL_RUNTIME_MONITORING"))
+            .map(|value| value == "1")
+            .unwrap_or(false)
+    }
+
+    fn powershell_runtime_monitor_args() -> Vec<String> {
+        let script = r#"
+$global:CliManagerPromptInitialized = $false
+$global:CliManagerPreviousPrompt = if (Test-Path function:\prompt) { (Get-Command prompt).ScriptBlock } else { $null }
+function global:__CliManagerEmitRuntimeEvent([string]$Event, $ExitCode) {
+  $esc = [char]27
+  $bel = [char]7
+  $payload = "$esc]777;cli-manager;session=$env:CLI_MANAGER_TAB_ID;event=$Event"
+  if ($null -ne $ExitCode) { $payload = "$payload;exit=$ExitCode" }
+  [Console]::Write($payload + $bel)
+}
+function global:prompt {
+  $success = $?
+  $nativeExitCode = $global:LASTEXITCODE
+  if ($global:CliManagerPromptInitialized) {
+    $exitCode = if ($success) { 0 } elseif ($nativeExitCode -is [int] -and $nativeExitCode -ne 0) { $nativeExitCode } else { 1 }
+    __CliManagerEmitRuntimeEvent 'command_finished' $exitCode
+  }
+  __CliManagerEmitRuntimeEvent 'prompt_shown' $null
+  $global:CliManagerPromptInitialized = $true
+  if ($global:CliManagerPreviousPrompt) { & $global:CliManagerPreviousPrompt } else { 'PS ' + (Get-Location) + '> ' }
+}
+"#;
+        vec![
+            "-NoLogo".to_string(),
+            "-NoExit".to_string(),
+            "-Command".to_string(),
+            script.to_string(),
+        ]
+    }
+
+    fn build_shell_args(
+        shell: &str,
+        env_vars: Option<&HashMap<String, String>>,
+    ) -> (&'static str, Vec<String>) {
+        let monitoring_enabled = Self::shell_runtime_monitoring_enabled(env_vars);
+        if monitoring_enabled && (shell == "powershell" || shell == "pwsh") {
+            let exe = if shell == "pwsh" {
+                "pwsh.exe"
+            } else {
+                "powershell.exe"
+            };
+            return (exe, Self::powershell_runtime_monitor_args());
+        }
+        Self::resolve_shell(shell)
     }
 
     pub fn create(
@@ -91,10 +145,11 @@ impl PtyManager {
                 e.to_string()
             })?;
 
-        let (exe, arg) = Self::resolve_shell(shell.unwrap_or("powershell"));
+        let shell_key = shell.unwrap_or("powershell");
+        let (exe, args) = Self::build_shell_args(shell_key, env_vars.as_ref());
         let mut cmd = CommandBuilder::new(exe);
-        if let Some(a) = arg {
-            cmd.arg(a);
+        for arg in args {
+            cmd.arg(arg);
         }
 
         if let Some(dir) = cwd {
@@ -280,13 +335,10 @@ impl PtyManager {
             msg
         })?;
         let mut session = session_arc.lock().unwrap();
-        session
-            .writer
-            .write_all(data.as_bytes())
-            .map_err(|e| {
-                error!("pty write failed: session_id={}, error={}", session_id, e);
-                e.to_string()
-            })?;
+        session.writer.write_all(data.as_bytes()).map_err(|e| {
+            error!("pty write failed: session_id={}, error={}", session_id, e);
+            e.to_string()
+        })?;
         session.writer.flush().map_err(|e| {
             error!("pty flush failed: session_id={}, error={}", session_id, e);
             e.to_string()

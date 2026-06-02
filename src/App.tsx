@@ -178,7 +178,7 @@ function App() {
     if (!IN_TAURI) return;
     const unlistenPromise = listen<CliHookPayload>("claude-hook-notification", (event) => {
       const tabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
-      if (tabId) {
+      if (tabId && event.payload.event !== "UserPromptSubmit") {
         showClaudeHookToast(event.payload, tabId);
       }
     });

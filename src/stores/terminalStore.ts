@@ -10,8 +10,39 @@ import { normalizeShellKey } from "../lib/shell";
 
 export type SessionStatus = "running" | "exited" | "error";
 export type CliHookSource = "claude" | "codex";
-export type CliHookEventName = "Notification" | "Stop" | "StopFailure" | "PermissionRequest";
-export type TabNotificationState = "none" | "attention" | "done" | "failed";
+export type CliHookEventName = "UserPromptSubmit" | "Notification" | "Stop" | "StopFailure" | "PermissionRequest";
+export type TabNotificationState = "none" | "running" | "attention" | "done" | "failed";
+export type ShellRuntimeEventName = "command_started" | "command_finished" | "prompt_shown";
+
+type TabStatusSourceName = "hook" | "shell";
+
+interface TabStatusSources {
+  hook?: TabNotificationState;
+  shell?: TabNotificationState;
+  hookUpdatedAt?: string;
+  shellUpdatedAt?: string;
+}
+
+export interface TabStatusDetails {
+  status: TabNotificationState;
+  updatedAt: string | null;
+}
+
+export interface ShellRuntimePayload {
+  sessionId: string;
+  event: ShellRuntimeEventName;
+  exitCode?: number | null;
+  timestamp?: string | null;
+}
+
+const SHELL_RUNTIME_MONITORING_ENV = "CLI_MANAGER_SHELL_RUNTIME_MONITORING";
+const TAB_STATUS_PRIORITY: Record<TabNotificationState, number> = {
+  none: 0,
+  done: 1,
+  running: 2,
+  failed: 3,
+  attention: 4,
+};
 
 export interface CliHookPayload {
   tabId: string;
@@ -41,12 +72,15 @@ interface TerminalStore {
   sessionStatuses: Record<string, SessionStatus>;
   statusListeners: Record<string, UnlistenFn>;
   tabNotifications: Record<string, TabNotificationState>;
+  tabStatuses: Record<string, TabStatusSources>;
+  tabStatusDetails: Record<string, TabStatusDetails>;
   splits: Record<string, SplitState>;
   hiddenBackgroundSessionIds: Set<string>;
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;
   setActive: (id: string) => void;
   handleCliHookEvent: (payload: CliHookPayload) => string | null;
+  handleShellRuntimeEvent: (payload: ShellRuntimePayload) => string | null;
   reorderSessions: (fromId: string, toId: string) => void;
   splitTerminal: (sessionId: string, direction: "horizontal" | "vertical", cwd?: string, shell?: string) => Promise<void>;
   unsplitTerminal: (sessionId: string) => Promise<void>;
@@ -94,9 +128,19 @@ function logTerminalExitStatus(session: TerminalSession, payload: PtyStatusPaylo
 }
 
 function mapCliHookEvent(event: CliHookEventName): TabNotificationState {
+  if (event === "UserPromptSubmit") return "running";
   if (event === "Notification" || event === "PermissionRequest") return "attention";
   if (event === "StopFailure") return "failed";
   return "done";
+}
+
+function mapShellRuntimeEvent(event: ShellRuntimeEventName, exitCode?: number | null): TabNotificationState {
+  if (event === "command_started") return "running";
+  if (event === "command_finished") {
+    if (exitCode === 0) return "done";
+    return typeof exitCode === "number" && Number.isFinite(exitCode) ? "failed" : "none";
+  }
+  return "none";
 }
 
 function resolvePrimaryTabId(tabId: string, splits: Record<string, SplitState>): string {
@@ -106,12 +150,107 @@ function resolvePrimaryTabId(tabId: string, splits: Record<string, SplitState>):
   return tabId;
 }
 
+function getTabStatusEntry(state: TabStatusSources | undefined): TabNotificationState {
+  if (!state) return "none";
+  const candidates: TabNotificationState[] = [state.hook ?? "none", state.shell ?? "none"];
+  return candidates.reduce((current, next) => (TAB_STATUS_PRIORITY[next] > TAB_STATUS_PRIORITY[current] ? next : current), "none");
+}
+
+function getTabStatusDetails(state: TabStatusSources | undefined): TabStatusDetails {
+  if (!state) return { status: "none", updatedAt: null };
+  const hookScore = state.hook ? TAB_STATUS_PRIORITY[state.hook] : -1;
+  const shellScore = state.shell ? TAB_STATUS_PRIORITY[state.shell] : -1;
+  if (hookScore >= shellScore) {
+    return { status: state.hook ?? "none", updatedAt: state.hookUpdatedAt ?? null };
+  }
+  return { status: state.shell ?? "none", updatedAt: state.shellUpdatedAt ?? null };
+}
+
+function buildTabStatusUpdate(
+  state: Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails">,
+  sessionId: string,
+  source: TabStatusSourceName,
+  status: TabNotificationState,
+  updatedAt: string
+): Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails"> {
+  const previous = state.tabStatuses[sessionId] ?? {};
+  const next: TabStatusSources = {
+    ...previous,
+    [source]: status,
+    [source === "hook" ? "hookUpdatedAt" : "shellUpdatedAt"]: updatedAt,
+  };
+  return {
+    tabStatuses: {
+      ...state.tabStatuses,
+      [sessionId]: next,
+    },
+    tabNotifications: {
+      ...state.tabNotifications,
+      [sessionId]: getTabStatusEntry(next),
+    },
+    tabStatusDetails: {
+      ...state.tabStatusDetails,
+      [sessionId]: getTabStatusDetails(next),
+    },
+  };
+}
+
+function buildTabStatusClear(
+  state: Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails">,
+  sessionId: string,
+  source?: TabStatusSourceName
+): Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails"> {
+  const current = state.tabStatuses[sessionId];
+  if (!current) return state;
+  const next: TabStatusSources = { ...current };
+  if (!source || source === "hook") {
+    delete next.hook;
+    delete next.hookUpdatedAt;
+  }
+  if (!source || source === "shell") {
+    delete next.shell;
+    delete next.shellUpdatedAt;
+  }
+  if (!next.hook && !next.shell) {
+    const { [sessionId]: _, ...restStatuses } = state.tabStatuses;
+    const { [sessionId]: __, ...restNotifications } = state.tabNotifications;
+    const { [sessionId]: ___, ...restDetails } = state.tabStatusDetails;
+    return { tabStatuses: restStatuses, tabNotifications: restNotifications, tabStatusDetails: restDetails };
+  }
+  return {
+    tabStatuses: { ...state.tabStatuses, [sessionId]: next },
+    tabNotifications: { ...state.tabNotifications, [sessionId]: getTabStatusEntry(next) },
+    tabStatusDetails: { ...state.tabStatusDetails, [sessionId]: getTabStatusDetails(next) },
+  };
+}
+
+function supportsShellRuntimeMonitoring(shell?: string | null): boolean {
+  const normalized = normalizeShellKey(shell);
+  return normalized === undefined || normalized === "powershell" || normalized === "pwsh";
+}
+
+function isShellRuntimeMonitoringActive(shell?: string | null): boolean {
+  return useSettingsStore.getState().shellRuntimeMonitoringEnabled && supportsShellRuntimeMonitoring(shell);
+}
+
+function buildPtyEnvVars(envVars?: Record<string, string> | null, shell?: string | null): Record<string, string> | null {
+  const next = { ...(envVars ?? {}) };
+  if (isShellRuntimeMonitoringActive(shell)) {
+    next[SHELL_RUNTIME_MONITORING_ENV] = "1";
+  } else {
+    delete next[SHELL_RUNTIME_MONITORING_ENV];
+  }
+  return Object.keys(next).length > 0 ? next : null;
+}
+
 export const useTerminalStore = create<TerminalStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
   sessionStatuses: {},
   statusListeners: {},
   tabNotifications: {},
+  tabStatuses: {},
+  tabStatusDetails: {},
   splits: {},
   hiddenBackgroundSessionIds: new Set<string>(),
 
@@ -125,7 +264,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     try {
       sessionId = await invoke<string>("pty_create", {
         cwd: cwd ?? null,
-        envVars: envVars ?? null,
+        envVars: buildPtyEnvVars(envVars ?? null, resolvedShell),
         shell: resolvedShell,
       });
     } catch (err) {
@@ -204,16 +343,22 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const newStatuses = { ...get().sessionStatuses };
     const newListeners = { ...get().statusListeners };
     const newNotifications = { ...get().tabNotifications };
+    const newTabStatuses = { ...get().tabStatuses };
+    const newTabStatusDetails = { ...get().tabStatusDetails };
     const newSplits = { ...get().splits };
 
     delete newStatuses[id];
     delete newListeners[id];
     delete newNotifications[id];
+    delete newTabStatuses[id];
+    delete newTabStatusDetails[id];
     delete newSplits[id];
     if (split) {
       delete newStatuses[split.secondSessionId];
       delete newListeners[split.secondSessionId];
       delete newNotifications[split.secondSessionId];
+      delete newTabStatuses[split.secondSessionId];
+      delete newTabStatusDetails[split.secondSessionId];
     }
 
     // Drop in-memory background overrides for closed sessions (R8).
@@ -236,6 +381,8 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       sessionStatuses: newStatuses,
       statusListeners: newListeners,
       tabNotifications: newNotifications,
+      tabStatuses: newTabStatuses,
+      tabStatusDetails: newTabStatusDetails,
       splits: newSplits,
       ...(newHidden !== prevHidden ? { hiddenBackgroundSessionIds: newHidden } : {}),
     });
@@ -255,24 +402,29 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
   setActive: (id) => {
     const notifications = get().tabNotifications;
-    set({
+    set((state) => ({
       activeSessionId: id,
-      ...(notifications[id] === "attention"
-        ? { tabNotifications: { ...notifications, [id]: "none" } }
-        : {}),
-    });
+      ...(notifications[id] === "attention" ? buildTabStatusClear(state, id, "hook") : {}),
+    }));
     scheduleSaveActiveId(id);
   },
 
   handleCliHookEvent: (payload) => {
     const tabId = resolvePrimaryTabId(payload.tabId, get().splits);
     if (!get().sessions.some((session) => session.id === tabId)) return null;
-    set((state) => ({
-      tabNotifications: {
-        ...state.tabNotifications,
-        [tabId]: mapCliHookEvent(payload.event),
-      },
-    }));
+    const updatedAt = payload.timestamp ?? new Date().toISOString();
+    set((state) => buildTabStatusUpdate(state, tabId, "hook", mapCliHookEvent(payload.event), updatedAt));
+    return tabId;
+  },
+
+  handleShellRuntimeEvent: (payload) => {
+    const tabId = resolvePrimaryTabId(payload.sessionId, get().splits);
+    const session = get().sessions.find((item) => item.id === tabId);
+    if (!session || !isShellRuntimeMonitoringActive(session.shell)) return null;
+    const status = mapShellRuntimeEvent(payload.event, payload.exitCode ?? null);
+    if (status === "none") return tabId;
+    const updatedAt = payload.timestamp ?? new Date().toISOString();
+    set((state) => buildTabStatusUpdate(state, tabId, "shell", status, updatedAt));
     return tabId;
   },
 
@@ -298,7 +450,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     try {
       secondSessionId = await invoke<string>("pty_create", {
         cwd: cwd ?? null,
-        envVars: null,
+        envVars: buildPtyEnvVars(null, resolvedShell),
         shell: resolvedShell,
       });
     } catch (err) {
@@ -365,16 +517,22 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     const newStatuses = { ...get().sessionStatuses };
     const newListeners = { ...get().statusListeners };
     const newNotifications = { ...get().tabNotifications };
+    const newTabStatuses = { ...get().tabStatuses };
+    const newTabStatusDetails = { ...get().tabStatusDetails };
     const newSplits = { ...get().splits };
     delete newStatuses[split.secondSessionId];
     delete newListeners[split.secondSessionId];
     delete newNotifications[split.secondSessionId];
+    delete newTabStatuses[split.secondSessionId];
+    delete newTabStatusDetails[split.secondSessionId];
     delete newSplits[sessionId];
 
     set({
       sessionStatuses: newStatuses,
       statusListeners: newListeners,
       tabNotifications: newNotifications,
+      tabStatuses: newTabStatuses,
+      tabStatusDetails: newTabStatusDetails,
       splits: newSplits,
     });
 
@@ -456,7 +614,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       try {
         newSessionId = await invoke<string>("pty_create", {
           cwd: ps.cwd ?? null,
-          envVars: ps.envVars ?? null,
+          envVars: buildPtyEnvVars(ps.envVars ?? null, resolvedShell),
           shell: resolvedShell,
         });
       } catch (err) {
@@ -526,7 +684,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       try {
         secondSessionId = await invoke<string>("pty_create", {
           cwd: ps.secondSessionCwd ?? null,
-          envVars: null,
+          envVars: buildPtyEnvVars(null, resolvedShell),
           shell: resolvedShell,
         });
       } catch (err) {

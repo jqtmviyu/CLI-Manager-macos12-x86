@@ -16,7 +16,7 @@ const CODEX_HOOKS_FILE_NAME: &str = "hooks.json";
 const CODEX_CONFIG_FILE_NAME: &str = "config.toml";
 
 const CLAUDE_APPROVAL_SCRIPT: &str = r#"param(
-    [ValidateSet("Notification")]
+    [ValidateSet("UserPromptSubmit", "Notification")]
     [string]$Event = "Notification"
 )
 
@@ -44,15 +44,22 @@ try {
     $message = $null
     if ($hookInput -and $hookInput.PSObject.Properties.Name -contains "message") {
         $message = [string]$hookInput.message
+    } elseif ($hookInput -and $hookInput.PSObject.Properties.Name -contains "prompt") {
+        $message = [string]$hookInput.prompt
     } elseif ($hookInput -and $hookInput.PSObject.Properties.Name -contains "notification") {
         $message = [string]$hookInput.notification
+    }
+
+    $title = switch ($Event) {
+        "UserPromptSubmit" { "Claude Code running" }
+        default { "Claude Code needs attention" }
     }
 
     $payload = @{
         tabId = $tabId
         source = "claude"
         event = $Event
-        title = "Claude Code needs attention"
+        title = $title
         message = $message
         sessionId = if ($hookInput -and $hookInput.PSObject.Properties.Name -contains "session_id") { [string]$hookInput.session_id } else { $null }
         cwd = (Get-Location).Path
@@ -141,7 +148,7 @@ exit 0
 "#;
 
 const CODEX_ATTENTION_SCRIPT: &str = r#"param(
-    [ValidateSet("PermissionRequest")]
+    [ValidateSet("UserPromptSubmit", "PermissionRequest")]
     [string]$Event = "PermissionRequest"
 )
 
@@ -169,15 +176,22 @@ try {
     $message = $null
     if ($hookInput -and $hookInput.PSObject.Properties.Name -contains "message") {
         $message = [string]$hookInput.message
+    } elseif ($hookInput -and $hookInput.PSObject.Properties.Name -contains "prompt") {
+        $message = [string]$hookInput.prompt
     } elseif ($hookInput -and $hookInput.PSObject.Properties.Name -contains "reason") {
         $message = [string]$hookInput.reason
+    }
+
+    $title = switch ($Event) {
+        "UserPromptSubmit" { "Codex CLI running" }
+        default { "Codex CLI needs attention" }
     }
 
     $payload = @{
         tabId = $tabId
         source = "codex"
         event = $Event
-        title = "Codex CLI needs attention"
+        title = $title
         message = $message
         sessionId = if ($hookInput -and $hookInput.PSObject.Properties.Name -contains "session_id") { [string]$hookInput.session_id } else { $null }
         cwd = (Get-Location).Path
@@ -271,12 +285,15 @@ pub struct ToolHookSettingsStatus {
     config_dir: Option<String>,
     hooks_dir: Option<String>,
     config_path: Option<String>,
+    feature_config_path: Option<String>,
     status: HookInstallStatus,
     attention_script_installed: bool,
     finished_script_installed: bool,
+    running_hook_installed: bool,
     attention_hook_installed: bool,
     stop_hook_installed: bool,
     failure_hook_installed: bool,
+    hooks_feature_installed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -346,7 +363,8 @@ pub async fn hook_settings_uninstall_codex(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
 ) -> Result<HookSettingsStatus, String> {
-    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?.ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
+    let codex_dir = resolve_codex_dir(codex_selected_dir, false)?
+        .ok_or_else(|| "未找到 Codex 配置目录".to_string())?;
     uninstall_codex_hooks(&codex_dir)?;
     Ok(HookSettingsStatus {
         claude: build_claude_status(resolve_claude_dir(selected_dir, false)?)?,
@@ -355,7 +373,10 @@ pub async fn hook_settings_uninstall_codex(
 }
 
 #[tauri::command]
-pub async fn hook_settings_select_dir(app: AppHandle, title: Option<String>) -> Result<Option<String>, String> {
+pub async fn hook_settings_select_dir(
+    app: AppHandle,
+    title: Option<String>,
+) -> Result<Option<String>, String> {
     let selected = app
         .dialog()
         .file()
@@ -391,6 +412,14 @@ fn install_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     ensure_root_object(&settings, "settings.json")?;
     add_hook_command(
         &mut settings,
+        "UserPromptSubmit",
+        build_command(
+            &hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME),
+            "UserPromptSubmit",
+        ),
+    );
+    add_hook_command(
+        &mut settings,
         "Notification",
         build_command(&hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME), "Notification"),
     );
@@ -417,7 +446,7 @@ fn uninstall_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     ensure_root_object(&settings, "settings.json")?;
     remove_hook_commands(
         &mut settings,
-        &["Notification", "Stop", "StopFailure"],
+        &["UserPromptSubmit", "Notification", "Stop", "StopFailure"],
         &[CLAUDE_APPROVAL_SCRIPT_NAME, CLAUDE_FINISHED_SCRIPT_NAME],
     );
     write_json(&settings_path, &settings)
@@ -440,6 +469,14 @@ fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let mut settings = read_json(&hooks_path)?;
     ensure_root_object(&settings, "hooks.json")?;
+    add_hook_command(
+        &mut settings,
+        "UserPromptSubmit",
+        build_command(
+            &hooks_dir.join(CODEX_ATTENTION_SCRIPT_NAME),
+            "UserPromptSubmit",
+        ),
+    );
     add_hook_command(
         &mut settings,
         "PermissionRequest",
@@ -495,7 +532,10 @@ fn set_toml_feature_hooks(content: &str) -> String {
             insert_index = index;
             break;
         }
-        if trimmed.split_once('=').is_some_and(|(key, _)| key.trim() == "hooks") {
+        if trimmed
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim() == "hooks")
+        {
             lines[index] = "hooks = true".to_string();
             return format!("{}\n", lines.join("\n"));
         }
@@ -503,6 +543,30 @@ fn set_toml_feature_hooks(content: &str) -> String {
 
     lines.insert(insert_index, "hooks = true".to_string());
     format!("{}\n", lines.join("\n"))
+}
+
+fn codex_hooks_feature_installed(config_path: &Path) -> Result<bool, String> {
+    let content = match fs::read_to_string(config_path) {
+        Ok(value) => value,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("读取 {} 失败: {e}", path_to_string(config_path))),
+    };
+    let mut in_features = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_features = trimmed == "[features]";
+            continue;
+        }
+        if in_features
+            && trimmed
+                .split_once('=')
+                .is_some_and(|(key, value)| key.trim() == "hooks" && value.trim() == "true")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn uninstall_codex_hooks(codex_dir: &Path) -> Result<(), String> {
@@ -515,7 +579,7 @@ fn uninstall_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     ensure_root_object(&settings, "hooks.json")?;
     remove_hook_commands(
         &mut settings,
-        &["PermissionRequest", "Stop"],
+        &["UserPromptSubmit", "PermissionRequest", "Stop"],
         &[CODEX_ATTENTION_SCRIPT_NAME, CODEX_FINISHED_SCRIPT_NAME],
     );
     write_json(&hooks_path, &settings)
@@ -545,7 +609,10 @@ fn resolve_claude_dir(
     }
 }
 
-fn resolve_codex_dir(selected_dir: Option<String>, create_if_missing: bool) -> Result<Option<PathBuf>, String> {
+fn resolve_codex_dir(
+    selected_dir: Option<String>,
+    create_if_missing: bool,
+) -> Result<Option<PathBuf>, String> {
     if let Some(dir) = selected_dir.and_then(|value| normalize_selected_dir(&value)) {
         if dir.is_dir() {
             return Ok(Some(dir));
@@ -594,6 +661,10 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
 
     let hooks_dir = claude_dir.join("hooks");
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
+    let running_command = build_command(
+        &hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME),
+        "UserPromptSubmit",
+    );
     let attention_command =
         build_command(&hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME), "Notification");
     let stop_command = build_command(&hooks_dir.join(CLAUDE_FINISHED_SCRIPT_NAME), "Stop");
@@ -603,6 +674,11 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
     let checks = ToolChecks {
         attention_script_installed: hooks_dir.join(CLAUDE_APPROVAL_SCRIPT_NAME).is_file(),
         finished_script_installed: hooks_dir.join(CLAUDE_FINISHED_SCRIPT_NAME).is_file(),
+        running_hook_installed: exact_command_registered(
+            &settings,
+            "UserPromptSubmit",
+            &running_command,
+        ),
         attention_hook_installed: exact_command_registered(
             &settings,
             "Notification",
@@ -615,12 +691,14 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
             &failure_command,
         ),
         failure_hook_required: true,
+        hooks_feature_installed: true,
     };
 
     Ok(status_from_checks(
         Some(claude_dir),
         Some(hooks_dir),
         Some(settings_path),
+        None,
         checks,
     ))
 }
@@ -632,6 +710,11 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
 
     let hooks_dir = codex_dir.join("hooks");
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+    let running_command = build_command(
+        &hooks_dir.join(CODEX_ATTENTION_SCRIPT_NAME),
+        "UserPromptSubmit",
+    );
     let attention_command = build_command(
         &hooks_dir.join(CODEX_ATTENTION_SCRIPT_NAME),
         "PermissionRequest",
@@ -641,6 +724,11 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
     let checks = ToolChecks {
         attention_script_installed: hooks_dir.join(CODEX_ATTENTION_SCRIPT_NAME).is_file(),
         finished_script_installed: hooks_dir.join(CODEX_FINISHED_SCRIPT_NAME).is_file(),
+        running_hook_installed: exact_command_registered(
+            &settings,
+            "UserPromptSubmit",
+            &running_command,
+        ),
         attention_hook_installed: exact_command_registered(
             &settings,
             "PermissionRequest",
@@ -649,12 +737,14 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
         stop_hook_installed: exact_command_registered(&settings, "Stop", &stop_command),
         failure_hook_installed: false,
         failure_hook_required: false,
+        hooks_feature_installed: codex_hooks_feature_installed(&config_path)?,
     };
 
     Ok(status_from_checks(
         Some(codex_dir),
         Some(hooks_dir),
         Some(hooks_path),
+        Some(config_path),
         checks,
     ))
 }
@@ -662,10 +752,12 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
 struct ToolChecks {
     attention_script_installed: bool,
     finished_script_installed: bool,
+    running_hook_installed: bool,
     attention_hook_installed: bool,
     stop_hook_installed: bool,
     failure_hook_installed: bool,
     failure_hook_required: bool,
+    hooks_feature_installed: bool,
 }
 
 fn missing_status() -> Result<ToolHookSettingsStatus, String> {
@@ -673,12 +765,15 @@ fn missing_status() -> Result<ToolHookSettingsStatus, String> {
         config_dir: None,
         hooks_dir: None,
         config_path: None,
+        feature_config_path: None,
         status: HookInstallStatus::DirectoryMissing,
         attention_script_installed: false,
         finished_script_installed: false,
+        running_hook_installed: false,
         attention_hook_installed: false,
         stop_hook_installed: false,
         failure_hook_installed: false,
+        hooks_feature_installed: false,
     })
 }
 
@@ -686,13 +781,16 @@ fn status_from_checks(
     config_dir: Option<PathBuf>,
     hooks_dir: Option<PathBuf>,
     config_path: Option<PathBuf>,
+    feature_config_path: Option<PathBuf>,
     checks: ToolChecks,
 ) -> ToolHookSettingsStatus {
     let mut values = vec![
         checks.attention_script_installed,
         checks.finished_script_installed,
+        checks.running_hook_installed,
         checks.attention_hook_installed,
         checks.stop_hook_installed,
+        checks.hooks_feature_installed,
     ];
     if checks.failure_hook_required {
         values.push(checks.failure_hook_installed);
@@ -709,12 +807,15 @@ fn status_from_checks(
         config_dir: config_dir.as_deref().map(path_to_string),
         hooks_dir: hooks_dir.as_deref().map(path_to_string),
         config_path: config_path.as_deref().map(path_to_string),
+        feature_config_path: feature_config_path.as_deref().map(path_to_string),
         status,
         attention_script_installed: checks.attention_script_installed,
         finished_script_installed: checks.finished_script_installed,
+        running_hook_installed: checks.running_hook_installed,
         attention_hook_installed: checks.attention_hook_installed,
         stop_hook_installed: checks.stop_hook_installed,
         failure_hook_installed: checks.failure_hook_installed,
+        hooks_feature_installed: checks.hooks_feature_installed,
     }
 }
 

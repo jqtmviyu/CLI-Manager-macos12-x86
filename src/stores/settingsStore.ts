@@ -94,6 +94,7 @@ interface Settings {
   closeBehavior: CloseBehavior;
   keyboardShortcuts: KeyboardShortcutMap;
   terminalNewlineShortcut: TerminalNewlineShortcut;
+  shellRuntimeMonitoringEnabled: boolean;
   terminalBackground: TerminalBackgroundSettings;
   hookPopupNotificationsEnabled: boolean;
   hookPopupAutoCloseEnabled: boolean;
@@ -134,6 +135,7 @@ const DEFAULTS: Settings = {
   closeBehavior: "ask",
   keyboardShortcuts: DEFAULT_KEYBOARD_SHORTCUTS,
   terminalNewlineShortcut: "Shift+Enter",
+  shellRuntimeMonitoringEnabled: true,
   terminalBackground: {
     enabled: false,
     imagePath: null,
@@ -313,6 +315,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
 
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+
+    entries.shellRuntimeMonitoringEnabled =
+      typeof entries.shellRuntimeMonitoringEnabled === "boolean"
+        ? entries.shellRuntimeMonitoringEnabled
+        : DEFAULTS.shellRuntimeMonitoringEnabled;
 
     entries.hookPopupNotificationsEnabled =
       typeof entries.hookPopupNotificationsEnabled === "boolean"

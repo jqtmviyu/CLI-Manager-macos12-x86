@@ -25,30 +25,44 @@ import { getTerminalBackground } from "../lib/terminalThemes";
 
 const TAB_NOTIFICATION_COLORS: Record<TabNotificationState, string> = {
   none: "#565f89",
+  running: "#8b5cf6",
   attention: "#ff9e64",
-  done: "#9ece6a",
+  done: "#8fbf7f",
   failed: "#f7768e",
 };
 
 const TAB_NOTIFICATION_LABELS: Record<TabNotificationState, string> = {
-  none: "无 CLI 通知",
-  attention: "CLI 需要处理",
-  done: "CLI 任务已完成",
-  failed: "CLI 执行异常",
+  none: "无运行状态",
+  running: "运行中",
+  attention: "待审批",
+  done: "已完成",
+  failed: "异常退出",
 };
+
+const PULSING_TAB_STATES = new Set<TabNotificationState>(["running", "attention"]);
+
+function formatTabStatusUpdatedAt(value: string | null | undefined): string {
+  if (!value) return "无";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
 
 interface SortableTabProps {
   id: string;
   title: string;
   isActive: boolean;
   notification: TabNotificationState;
+  statusUpdatedAt: string | null;
   onActivate: () => void;
   onClose: () => void;
   menuContent: ReactNode;
 }
 
-function SortableTab({ id, title, isActive, notification, onActivate, onClose, menuContent }: SortableTabProps) {
+function SortableTab({ id, title, isActive, notification, statusUpdatedAt, onActivate, onClose, menuContent }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const statusLabel = TAB_NOTIFICATION_LABELS[notification];
+  const statusTitle = `状态：${statusLabel}\n会话：${title}\n更新时间：${formatTabStatusUpdatedAt(statusUpdatedAt)}`;
 
   const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
   const style = {
@@ -72,13 +86,19 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, m
           {...listeners}
         >
           <span
-            className="w-2 h-2 rounded-full shrink-0"
-            style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification] }}
+            className="ui-tab-runtime-dot w-2 h-2 rounded-full shrink-0"
+            data-pulsing={PULSING_TAB_STATES.has(notification) ? "true" : "false"}
+            style={{ backgroundColor: TAB_NOTIFICATION_COLORS[notification], color: TAB_NOTIFICATION_COLORS[notification] }}
             role="status"
-            aria-label={TAB_NOTIFICATION_LABELS[notification]}
-            title={TAB_NOTIFICATION_LABELS[notification]}
+            aria-label={statusLabel}
+            title={statusTitle}
           />
-          <span className="max-w-[140px] truncate tracking-[0.01em]">{title}</span>
+          <span className="max-w-[140px] truncate tracking-[0.01em]" title={statusTitle}>{title}</span>
+          {notification !== "none" && (
+            <span className="shrink-0 text-[10px] leading-none text-on-surface-variant" title={statusTitle}>
+              {statusLabel}
+            </span>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); onClose(); }}
             onPointerDown={(e) => e.stopPropagation()}
@@ -96,11 +116,12 @@ function SortableTab({ id, title, isActive, notification, onActivate, onClose, m
 }
 
 export function TerminalTabs() {
-  const { sessions, activeSessionId, tabNotifications, splits } = useTerminalStore(
+  const { sessions, activeSessionId, tabNotifications, tabStatusDetails, splits } = useTerminalStore(
     useShallow((s) => ({
       sessions: s.sessions,
       activeSessionId: s.activeSessionId,
       tabNotifications: s.tabNotifications,
+      tabStatusDetails: s.tabStatusDetails,
       splits: s.splits,
     }))
   );
@@ -187,6 +208,7 @@ export function TerminalTabs() {
                     title={s.title}
                     isActive={s.id === activeSessionId}
                     notification={tabNotifications[s.id] ?? "none"}
+                    statusUpdatedAt={tabStatusDetails[s.id]?.updatedAt ?? null}
                     onActivate={() => setActive(s.id)}
                     onClose={() => closeSession(s.id)}
                     menuContent={

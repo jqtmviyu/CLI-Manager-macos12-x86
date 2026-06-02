@@ -40,6 +40,7 @@ export function ThemeSettingsPage() {
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
+  const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
   const setTerminalThemeMode = useSettingsStore((s) => s.setTerminalThemeMode);
   const update = useSettingsStore((s) => s.update);
   const [query, setQuery] = useState("");
@@ -207,6 +208,21 @@ export function ThemeSettingsPage() {
                 checked={useExternalTerminal}
                 onCheckedChange={() => update("useExternalTerminal", !useExternalTerminal)}
                 aria-label={useExternalTerminal ? "关闭外部 PowerShell" : "开启外部 PowerShell"}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4 rounded-xl border border-border bg-surface-container-lowest px-3 py-2">
+              <div>
+                <div className="text-xs text-on-surface-variant">通用 Shell 运行监控</div>
+                <div className="mt-1 text-[11px] text-text-muted">
+                  开启后新建 PowerShell / pwsh 终端会注入会话级监控逻辑，用于更新标签运行状态。
+                </div>
+              </div>
+              <Switch
+                className="shrink-0"
+                checked={shellRuntimeMonitoringEnabled}
+                onCheckedChange={(checked) => update("shellRuntimeMonitoringEnabled", checked)}
+                aria-label={shellRuntimeMonitoringEnabled ? "关闭通用 Shell 运行监控" : "开启通用 Shell 运行监控"}
               />
             </div>
           </div>

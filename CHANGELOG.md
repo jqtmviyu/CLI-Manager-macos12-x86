@@ -2,6 +2,18 @@
 
 ## [V0.1.9] - 2026-06-01
 
+### 终端标签运行状态
+
+- 终端标签状态点升级为统一运行态：支持“运行中 / 待审批 / 已完成 / 异常退出”，并按 `待审批 > 异常退出 > 运行中 > 已完成` 优先级合并 Hook 与 shell 状态。
+- Claude Code 与 Codex CLI 的 `UserPromptSubmit` hook 会将对应标签切换为“运行中”，避免 CLI 刚启动就误显示运行中。
+- 新增 PowerShell / pwsh 通用 shell 运行监控，通过会话级私有 OSC marker 更新命令开始、完成与异常退出状态；设置页可关闭该监控。
+
+### Hook 设置增强
+
+- Claude / Codex Hook 设置页新增运行中 Hook 安装状态，展示 `UserPromptSubmit` 是否已写入。
+- Codex Hook 安装状态新增 `config.toml` 路径与 `[features].hooks` 检查项，并将其纳入“已安装”判定。
+- Hook 弹框新增全局开关与自动关闭时间配置；关闭弹框后仍保留终端标签状态点更新。
+
 ### Codex Hook 通知
 
 - 新增 Codex CLI hook 桥接，复用本地回环通知服务接收 `PermissionRequest` / `Stop` 事件，并按来源区分 `claude` / `codex` 通知来源。

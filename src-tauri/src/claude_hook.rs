@@ -239,9 +239,12 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
     match normalize_source(payload.source.as_deref()) {
         "claude" => matches!(
             payload.event.as_str(),
-            "Notification" | "Stop" | "StopFailure"
+            "UserPromptSubmit" | "Notification" | "Stop" | "StopFailure"
         ),
-        "codex" => matches!(payload.event.as_str(), "PermissionRequest" | "Stop"),
+        "codex" => matches!(
+            payload.event.as_str(),
+            "UserPromptSubmit" | "PermissionRequest" | "Stop"
+        ),
         _ => false,
     }
 }

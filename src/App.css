@@ -98,6 +98,17 @@
   50% { opacity: 0.4; }
 }
 
+@keyframes tab-runtime-breathe {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 35%, transparent);
+  }
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 8%, transparent);
+  }
+}
+
 /* Dark theme - Night Indigo (default) */
 :root,
 [data-theme="dark"],
@@ -747,6 +758,15 @@ samp,
 
 .ui-tab-trigger[data-selected="true"] {
   color: var(--on-surface);
+}
+
+.ui-tab-runtime-dot {
+  color: var(--tab-runtime-dot-color, currentColor);
+  transition: background-color var(--animate-duration-fast) var(--ease-standard), box-shadow var(--animate-duration-fast) var(--ease-standard);
+}
+
+.ui-tab-runtime-dot[data-pulsing="true"] {
+  animation: tab-runtime-breathe 1.6s var(--ease-standard) infinite;
 }
 
 .ui-terminal-tab-close:hover {
