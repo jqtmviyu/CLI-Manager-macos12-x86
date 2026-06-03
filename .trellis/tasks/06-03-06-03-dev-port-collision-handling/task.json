@@ -1,9 +1,9 @@
 {
-  "id": "merge-remote-master-resolve-conflicts",
-  "name": "merge-remote-master-resolve-conflicts",
-  "title": "merge remote master resolve conflicts",
+  "id": "06-03-dev-port-collision-handling",
+  "name": "06-03-dev-port-collision-handling",
+  "title": "dev port collision handling",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

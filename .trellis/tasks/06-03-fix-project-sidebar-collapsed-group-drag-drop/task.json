@@ -1,9 +1,9 @@
 {
-  "id": "merge-remote-master-resolve-conflicts",
-  "name": "merge-remote-master-resolve-conflicts",
-  "title": "merge remote master resolve conflicts",
+  "id": "fix-project-sidebar-collapsed-group-drag-drop",
+  "name": "fix-project-sidebar-collapsed-group-drag-drop",
+  "title": "fix project sidebar collapsed group drag drop",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

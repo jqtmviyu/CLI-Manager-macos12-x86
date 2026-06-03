@@ -1,9 +1,9 @@
 {
-  "id": "merge-remote-master-resolve-conflicts",
-  "name": "merge-remote-master-resolve-conflicts",
-  "title": "merge remote master resolve conflicts",
+  "id": "ctrl-p-ui",
+  "name": "ctrl-p-ui",
+  "title": "修复 Ctrl+P 快捷窗口 UI 与项目风格一致",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

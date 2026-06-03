@@ -963,27 +963,33 @@ samp,
 
 .ui-tree-meta-chip {
   --cli-chip-color: var(--primary);
-  background-color: color-mix(in srgb, var(--primary) 12%, var(--surface-container-high) 88%);
-  color: var(--primary);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cli-chip-color) 22%, transparent);
+  align-items: center;
+  gap: 4px;
+  background-color: color-mix(in srgb, var(--surface-container-high) 58%, transparent);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cli-chip-color) 26%, transparent);
+}
+
+.ui-tree-meta-chip::before {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background-color: var(--cli-chip-color);
+  content: "";
+  opacity: 0.82;
 }
 
 .ui-tree-meta-chip[data-cli-tool="claude"] {
   --cli-chip-color: #f97316;
-  background-color: color-mix(in srgb, var(--cli-chip-color) 16%, var(--surface-container-high) 84%);
-  color: color-mix(in srgb, var(--cli-chip-color) 82%, var(--on-surface) 18%);
 }
 
 .ui-tree-meta-chip[data-cli-tool="codex"] {
   --cli-chip-color: #22c55e;
-  background-color: color-mix(in srgb, var(--cli-chip-color) 15%, var(--surface-container-high) 85%);
-  color: color-mix(in srgb, var(--cli-chip-color) 76%, var(--on-surface) 24%);
 }
 
 .ui-tree-meta-chip[data-cli-tool="gemini"] {
   --cli-chip-color: #8b5cf6;
-  background-color: color-mix(in srgb, var(--cli-chip-color) 16%, var(--surface-container-high) 84%);
-  color: color-mix(in srgb, var(--cli-chip-color) 80%, var(--on-surface) 20%);
 }
 
 .ui-tree-warning-chip {

@@ -475,6 +475,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           matchIndices={matchIndices}
           matchCursor={matchCursor}
           focusedMessageIndex={focusedMessageIndex}
+          focusedMessageSeq={focusedMessageSeq}
           visibleMessages={visibleMessages}
           visibleMessageCount={visibleMessageCount}
           hasMoreMessages={hasMoreMessages}

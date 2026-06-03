@@ -1,9 +1,9 @@
 {
-  "id": "merge-remote-master-resolve-conflicts",
-  "name": "merge-remote-master-resolve-conflicts",
-  "title": "merge remote master resolve conflicts",
+  "id": "command-palette-group-headers",
+  "name": "command-palette-group-headers",
+  "title": "强化命令面板分组视觉层级",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
