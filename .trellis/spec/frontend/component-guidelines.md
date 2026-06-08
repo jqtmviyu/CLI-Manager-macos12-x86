@@ -165,3 +165,42 @@ if (sequence === "\x1b[?25l") {
 ```
 
 **Prevention**: For high-frequency TUI redraw issues, inspect application-emitted ANSI cursor visibility sequences before changing xterm appearance options. Pass hide through immediately, debounce show, and keep output processing in the PTY write path instead of adding CLI-specific UI state.
+
+### Convention: xterm Windows PTY and paste handling
+
+**What**: Internal xterm instances backed by the app's Windows PTY must use xterm's Windows compatibility and native paste path.
+
+**Why**: ConPTY resize/reflow can make PowerShell output appear to vanish after fit/tab changes. Custom paste handlers that write directly to `pty_write` bypass xterm's CR normalization and bracketed paste markers, so TUIs such as Claude Code may treat multi-line paste as typed Enter events.
+
+**Correct**:
+
+```tsx
+const terminal = new Terminal({
+  scrollOnEraseInDisplay: true,
+  windowsPty: { backend: "conpty" },
+});
+
+const pasteIntoTerminal = (text: string) => {
+  terminal.paste(text);
+};
+
+terminal.onData((data) => {
+  invoke("pty_write", { sessionId, data });
+  // If command history needs pasted text, strip complete bracketed-paste
+  // wrappers only for history; never rewrite data before sending it to PTY.
+});
+```
+
+**Wrong**:
+
+```tsx
+const data = text.replace(/\r\n?/g, "\n");
+invoke("pty_write", { sessionId, data });
+```
+
+**Tests / manual checks**:
+
+- [ ] Windows 10 + PowerShell retains scrollback after tab switch / resize / fit.
+- [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
+- [ ] CMD still accepts normal paste and Enter behavior.
+

@@ -320,7 +320,9 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       fontSize,
       fontFamily,
       scrollback: 5000,
+      scrollOnEraseInDisplay: true,
       allowProposedApi: true,
+      windowsPty: { backend: "conpty" },
       // Always true — research confirms WebglAddon stays compatible and the
       // perf cost is acceptable. xterm cannot toggle this after construction,
       // so we pay it unconditionally to avoid having to recreate the terminal
@@ -381,16 +383,12 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       }
     };
 
-    const normalizePastedInput = (text: string) => text.replace(/\r\n?/g, "\n");
-
     const markAttentionInputHandled = () => useTerminalStore.getState().markAttentionInputHandled(sessionId);
 
-    const writePastedInput = (text: string) => {
-      const data = normalizePastedInput(text);
-      if (!data) return;
+    const pasteIntoTerminal = (text: string) => {
+      if (!text) return;
       markAttentionInputHandled();
-      inputBuffer.current += data;
-      invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("paste", err));
+      terminal.paste(text);
     };
 
     const pasteTarget = containerRef.current;
@@ -400,7 +398,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (text === undefined) return;
       e.preventDefault();
       e.stopPropagation();
-      writePastedInput(text);
+      pasteIntoTerminal(text);
     };
 
     pasteTarget.addEventListener("paste", onPaste, pasteListenerOptions);
@@ -457,7 +455,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       if (key === "v") {
         e.preventDefault();
         navigator.clipboard.readText().then((text) => {
-          writePastedInput(text);
+          pasteIntoTerminal(text);
         }).catch((err) => {
           logError("Failed to read clipboard text", { sessionId, err });
         });
@@ -485,9 +483,11 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         inputBuffer.current = inputBuffer.current.slice(0, -1);
       } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
         inputBuffer.current += data;
-      } else if (data.length > 1 && !data.startsWith("\x1b")) {
-        // Pasted text
-        inputBuffer.current += data;
+      } else if (data.length > 1) {
+        const pastedText = data.replace(/^\x1b\[200~/, "").replace(/\x1b\[201~$/, "");
+        if (!pastedText.startsWith("\x1b")) {
+          inputBuffer.current += pastedText.replace(/\r\n?/g, "\n");
+        }
       }
     });
 
