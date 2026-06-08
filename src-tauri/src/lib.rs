@@ -273,6 +273,7 @@ pub fn run() {
             commands::history::history_delete_session,
             commands::history::history_search,
             commands::history::history_list_prompts,
+            commands::history::history_list_stats_projects,
             commands::history::history_get_stats,
             commands::sync::sync_get_default_device_name,
             commands::sync::sync_list_device_snapshots,

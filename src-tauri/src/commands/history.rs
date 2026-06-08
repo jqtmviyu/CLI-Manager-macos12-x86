@@ -2,7 +2,7 @@ use log::debug;
 use memchr::memmem;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
@@ -124,10 +124,24 @@ struct SessionFilesCache {
     by_source: HashMap<String, CachedSessionFiles>,
 }
 
+#[derive(Clone)]
+struct CachedHistoryStatsAggregation {
+    response: HistoryStatsResponse,
+    cached_at: i64,
+}
+
+#[derive(Default)]
+struct HistoryStatsAggregationCache {
+    entries: HashMap<String, CachedHistoryStatsAggregation>,
+}
+
 const HOUR_MS: i64 = 60 * 60 * 1000;
 const DAY_MS: i64 = 24 * HOUR_MS;
+const MAX_STATS_RANGE_DAYS: usize = 180;
+const HISTORY_STATS_AGGREGATION_CACHE_MAX: usize = 32;
 static SESSION_STATS_CACHE: OnceLock<Mutex<SessionStatsCache>> = OnceLock::new();
 static SESSION_FILES_CACHE: OnceLock<Mutex<SessionFilesCache>> = OnceLock::new();
+static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCache>> = OnceLock::new();
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -290,6 +304,15 @@ struct DayStatsAggregate {
 struct HourStatsAggregate {
     sessions: usize,
     messages: usize,
+}
+
+#[derive(Clone, Copy)]
+struct StatsTimeBounds {
+    start_at: i64,
+    end_at: i64,
+    start_day: i64,
+    range_days: usize,
+    explicit: bool,
 }
 
 #[tauri::command]
@@ -706,23 +729,82 @@ pub async fn history_list_prompts(
 }
 
 #[tauri::command]
+pub async fn history_list_stats_projects(
+    source: Option<String>,
+    claude_config_dir: Option<String>,
+    codex_config_dir: Option<String>,
+) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let roots = history_roots(claude_config_dir, codex_config_dir);
+        let source_filter = source.map(|v| v.to_lowercase());
+        let mut projects = BTreeSet::new();
+
+        for entry in refresh_history_index(&roots) {
+            if let Some(filter) = &source_filter {
+                if &entry.file_ref.source != filter {
+                    continue;
+                }
+            }
+            if !entry.file_ref.project_key.trim().is_empty() {
+                projects.insert(entry.file_ref.project_key);
+            }
+        }
+
+        Ok(projects.into_iter().collect())
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
 pub async fn history_get_stats(
     source: Option<String>,
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
     project_key: Option<String>,
     range_days: Option<usize>,
+    start_at: Option<i64>,
+    end_at: Option<i64>,
+    force: Option<bool>,
 ) -> Result<HistoryStatsResponse, String> {
-    let range_days = range_days.unwrap_or(30).clamp(1, 180);
     let roots = history_roots(claude_config_dir, codex_config_dir);
     let source_filter = source.map(|v| v.to_lowercase());
     let target_project = project_key
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    let entries = refresh_history_index(&roots);
-    let end_day = day_start_utc(now_millis());
-    let start_day = end_day - (range_days as i64 - 1) * DAY_MS;
+    let bounds = resolve_stats_time_bounds(range_days, start_at, end_at)?;
+    let force = force.unwrap_or(false);
+    let index = refresh_history_index_snapshot(&roots, force);
+    let cache_key = make_history_stats_aggregation_cache_key(
+        &roots,
+        source_filter.as_deref(),
+        target_project.as_deref(),
+        bounds,
+        index.generation,
+    );
 
+    if !force {
+        if let Some(response) = stats_aggregation_cache_get(&cache_key) {
+            return Ok(response);
+        }
+    }
+
+    let response = build_history_stats_response(
+        index.entries,
+        source_filter.as_deref(),
+        target_project.as_deref(),
+        bounds,
+    );
+    stats_aggregation_cache_set(cache_key, response.clone());
+    Ok(response)
+}
+
+fn build_history_stats_response(
+    entries: Vec<HistoryIndexEntry>,
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    bounds: StatsTimeBounds,
+) -> HistoryStatsResponse {
     let mut total_sessions = 0usize;
     let mut total_messages = 0usize;
     let mut total_input_tokens = 0u64;
@@ -734,23 +816,23 @@ pub async fn history_get_stats(
     let mut hourly_map: Vec<HourStatsAggregate> = vec![HourStatsAggregate::default(); 24];
 
     for entry in entries {
-        if let Some(filter) = &source_filter {
-            if &entry.file_ref.source != filter {
+        if let Some(filter) = source_filter {
+            if entry.file_ref.source != filter {
                 continue;
             }
         }
-        if let Some(project) = &target_project {
-            if &entry.file_ref.project_key != project {
+        if let Some(project) = target_project {
+            if entry.file_ref.project_key != project {
                 continue;
             }
         }
 
         let computed = entry.computed;
         let summary = summary_from_computation(&entry.file_ref, &computed);
-        let day_start = day_start_utc(summary.updated_at);
-        if day_start < start_day || day_start > end_day {
+        if summary.updated_at < bounds.start_at || summary.updated_at > bounds.end_at {
             continue;
         }
+        let day_start = stats_day_start(summary.updated_at, bounds);
 
         total_sessions += 1;
         total_messages += summary.message_count;
@@ -882,10 +964,10 @@ pub async fn history_get_stats(
         .collect();
 
     let max_day_sessions = day_map.values().map(|item| item.sessions).max().unwrap_or(0);
-    let mut heatmap = Vec::with_capacity(range_days);
-    let mut daily_series = Vec::with_capacity(range_days);
-    for day_idx in 0..range_days {
-        let day_start = start_day + day_idx as i64 * DAY_MS;
+    let mut heatmap = Vec::with_capacity(bounds.range_days);
+    let mut daily_series = Vec::with_capacity(bounds.range_days);
+    for day_idx in 0..bounds.range_days {
+        let day_start = bounds.start_day + day_idx as i64 * DAY_MS;
         if let Some(mut day) = day_map.remove(&day_start) {
             day.session_refs.sort_by(|a, b| {
                 b.updated_at
@@ -925,8 +1007,8 @@ pub async fn history_get_stats(
         }
     }
 
-    Ok(HistoryStatsResponse {
-        range_days,
+    HistoryStatsResponse {
+        range_days: bounds.range_days,
         total_sessions,
         total_messages,
         total_input_tokens,
@@ -938,7 +1020,106 @@ pub async fn history_get_stats(
         source_distribution,
         project_efficiency,
         hourly_activity,
+    }
+}
+
+fn resolve_stats_time_bounds(
+    range_days: Option<usize>,
+    start_at: Option<i64>,
+    end_at: Option<i64>,
+) -> Result<StatsTimeBounds, String> {
+    if let (Some(start_at), Some(end_at)) = (start_at, end_at) {
+        if start_at <= 0 || end_at <= 0 || end_at < start_at {
+            return Err("invalid_date_range".to_string());
+        }
+        let span_ms = end_at.saturating_sub(start_at);
+        let range_days = (span_ms / DAY_MS).saturating_add(1) as usize;
+        if range_days == 0 || range_days > MAX_STATS_RANGE_DAYS {
+            return Err("date_range_too_large".to_string());
+        }
+        return Ok(StatsTimeBounds {
+            start_at,
+            end_at,
+            start_day: start_at,
+            range_days,
+            explicit: true,
+        });
+    }
+    if start_at.is_some() || end_at.is_some() {
+        return Err("invalid_date_range".to_string());
+    }
+
+    let range_days = range_days
+        .unwrap_or(30)
+        .clamp(1, MAX_STATS_RANGE_DAYS);
+    let end_day = day_start_utc(now_millis());
+    let start_day = end_day - (range_days as i64 - 1) * DAY_MS;
+    Ok(StatsTimeBounds {
+        start_at: start_day,
+        end_at: end_day + DAY_MS - 1,
+        start_day,
+        range_days,
+        explicit: false,
     })
+}
+
+fn stats_day_start(ts: i64, bounds: StatsTimeBounds) -> i64 {
+    if !bounds.explicit {
+        return day_start_utc(ts);
+    }
+    bounds.start_day + ((ts - bounds.start_at) / DAY_MS) * DAY_MS
+}
+
+fn make_history_stats_aggregation_cache_key(
+    roots: &HistoryRoots,
+    source_filter: Option<&str>,
+    target_project: Option<&str>,
+    bounds: StatsTimeBounds,
+    index_generation: u64,
+) -> String {
+    format!(
+        "{}|source={}|project={}|start={}|end={}|gen={}",
+        roots.cache_key(),
+        source_filter.unwrap_or("__all__"),
+        target_project.unwrap_or("__all__"),
+        bounds.start_at,
+        bounds.end_at,
+        index_generation
+    )
+}
+
+fn get_stats_aggregation_cache() -> &'static Mutex<HistoryStatsAggregationCache> {
+    HISTORY_STATS_AGGREGATION_CACHE
+        .get_or_init(|| Mutex::new(HistoryStatsAggregationCache::default()))
+}
+
+fn stats_aggregation_cache_get(key: &str) -> Option<HistoryStatsResponse> {
+    let cache = get_stats_aggregation_cache().lock().ok()?;
+    cache.entries.get(key).map(|entry| entry.response.clone())
+}
+
+fn stats_aggregation_cache_set(key: String, response: HistoryStatsResponse) {
+    if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
+        if !cache.entries.contains_key(&key)
+            && cache.entries.len() >= HISTORY_STATS_AGGREGATION_CACHE_MAX
+        {
+            if let Some(oldest_key) = cache
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.cached_at)
+                .map(|(key, _)| key.clone())
+            {
+                cache.entries.remove(&oldest_key);
+            }
+        }
+        cache.entries.insert(
+            key,
+            CachedHistoryStatsAggregation {
+                response,
+                cached_at: now_millis(),
+            },
+        );
+    }
 }
 
 fn get_stats_cache() -> &'static Mutex<SessionStatsCache> {
@@ -960,19 +1141,28 @@ fn invalidate_history_caches() {
     if let Ok(mut cache) = get_stats_cache().lock() {
         cache.entries.clear();
     }
+    if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
+        cache.entries.clear();
+    }
     if let Ok(mut index) = get_history_index().write() {
         *index = HistorySessionIndex::default();
     }
 }
 
 fn refresh_history_index(roots: &HistoryRoots) -> Vec<HistoryIndexEntry> {
+    refresh_history_index_snapshot(roots, false).entries
+}
+
+fn refresh_history_index_snapshot(roots: &HistoryRoots, force: bool) -> HistorySessionIndex {
     let now = now_millis();
-    if let Ok(index) = get_history_index().read() {
-        if index.roots.eq(roots)
-            && index.refreshed_at > 0
-            && now - index.refreshed_at < HISTORY_SESSION_INDEX_TTL_MS
-        {
-            return index.entries.clone();
+    if !force {
+        if let Ok(index) = get_history_index().read() {
+            if index.roots.eq(roots)
+                && index.refreshed_at > 0
+                && now - index.refreshed_at < HISTORY_SESSION_INDEX_TTL_MS
+            {
+                return index.clone();
+            }
         }
     }
 
@@ -981,20 +1171,20 @@ fn refresh_history_index(roots: &HistoryRoots) -> Vec<HistoryIndexEntry> {
         .ok()
         .filter(|index| index.roots.eq(roots) && index.refreshed_at > 0)
         .map(|index| index.clone());
-    let next = build_history_index(now, roots, previous);
-    let entries = next.entries.clone();
+    let next = build_history_index(now, roots, previous, force);
 
     if let Ok(mut index) = get_history_index().write() {
-        *index = next;
+        *index = next.clone();
     }
 
-    entries
+    next
 }
 
 fn build_history_index(
     now: i64,
     roots: &HistoryRoots,
     previous: Option<HistorySessionIndex>,
+    force_file_scan: bool,
 ) -> HistorySessionIndex {
     let mut previous_entries: HashMap<String, HistoryIndexEntry> = previous
         .as_ref()
@@ -1008,7 +1198,7 @@ fn build_history_index(
         })
         .unwrap_or_default();
     let previous_generation = previous.as_ref().map(|index| index.generation).unwrap_or(0);
-    let files = collect_session_files(None, roots);
+    let files = collect_session_files_with_force(None, roots, force_file_scan);
     let mut entries = Vec::with_capacity(files.len());
 
     for file_ref in files {
@@ -1047,13 +1237,58 @@ fn build_history_index(
         by_path.insert(path_to_key(&entry.file_ref.path), index);
     }
 
+    let changed = previous
+        .as_ref()
+        .map(|previous| !history_index_entries_match(&previous.entries, &entries))
+        .unwrap_or(true);
+    let generation = if changed {
+        previous_generation.saturating_add(1)
+    } else {
+        previous_generation
+    };
+
     HistorySessionIndex {
         roots: roots.clone(),
         entries,
         by_path,
         refreshed_at: now,
-        generation: previous_generation.saturating_add(1),
+        generation,
     }
+}
+
+fn history_index_entries_match(
+    previous: &[HistoryIndexEntry],
+    next: &[HistoryIndexEntry],
+) -> bool {
+    if previous.len() != next.len() {
+        return false;
+    }
+
+    let previous_by_path: HashMap<String, (&str, &str, SessionFileFingerprint)> = previous
+        .iter()
+        .map(|entry| {
+            (
+                path_to_key(&entry.file_ref.path),
+                (
+                    entry.file_ref.source.as_str(),
+                    entry.file_ref.project_key.as_str(),
+                    entry.fingerprint,
+                ),
+            )
+        })
+        .collect();
+
+    next.iter().all(|entry| {
+        let path_key = path_to_key(&entry.file_ref.path);
+        previous_by_path
+            .get(&path_key)
+            .map(|(source, project_key, fingerprint)| {
+                *source == entry.file_ref.source.as_str()
+                    && *project_key == entry.file_ref.project_key.as_str()
+                    && *fingerprint == entry.fingerprint
+            })
+            .unwrap_or(false)
+    })
 }
 
 fn lookup_indexed_computation(file_ref: &SessionFileRef) -> Option<CachedSessionComputation> {
@@ -1240,6 +1475,14 @@ fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
 }
 
 fn collect_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> Vec<SessionFileRef> {
+    collect_session_files_with_force(source_filter, roots, false)
+}
+
+fn collect_session_files_with_force(
+    source_filter: Option<&str>,
+    roots: &HistoryRoots,
+    force: bool,
+) -> Vec<SessionFileRef> {
     let cache_key = format!(
         "{}|{}",
         source_filter
@@ -1249,10 +1492,12 @@ fn collect_session_files(source_filter: Option<&str>, roots: &HistoryRoots) -> V
     );
     let now = now_millis();
 
-    if let Ok(cache) = get_files_cache().lock() {
-        if let Some(entry) = cache.by_source.get(&cache_key) {
-            if now - entry.timestamp_ms < SESSION_FILES_TTL_MS {
-                return entry.files.clone();
+    if !force {
+        if let Ok(cache) = get_files_cache().lock() {
+            if let Some(entry) = cache.by_source.get(&cache_key) {
+                if now - entry.timestamp_ms < SESSION_FILES_TTL_MS {
+                    return entry.files.clone();
+                }
             }
         }
     }

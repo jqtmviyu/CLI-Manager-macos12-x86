@@ -198,7 +198,6 @@ function App() {
   const viewMode = useSettingsStore((s) => s.viewMode);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const updateSetting = useSettingsStore((s) => s.update);
-  const historySessions = useHistoryStore((s) => s.sessions);
   const openHistory = useHistoryStore((s) => s.openHistory);
   const openHistorySession = useHistoryStore((s) => s.openSession);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -224,12 +223,6 @@ function App() {
 
   const handleOpenStats = useCallback(() => {
     setStatsOpen(true);
-    const history = useHistoryStore.getState();
-    if (history.sessions.length === 0) {
-      void history.loadSessions().catch((err) => {
-        toast.error("加载历史会话失败", { description: String(err) });
-      });
-    }
   }, []);
 
   const handleOpenStatsSession = useCallback(
@@ -570,7 +563,6 @@ function App() {
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} initialTab={settingsInitialTab} />
       <StatsPanel
         open={statsOpen}
-        sessions={historySessions}
         onClose={() => setStatsOpen(false)}
         onOpenSession={handleOpenStatsSession}
       />

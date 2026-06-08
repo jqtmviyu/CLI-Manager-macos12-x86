@@ -3,7 +3,7 @@ import { BarChart3, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
-import type { HistorySessionSummary, HistorySessionView } from "../../lib/types";
+import type { HistorySessionSummary } from "../../lib/types";
 import { useHistoryStore } from "../../stores/historyStore";
 import { TimelineHeatmap } from "./TimelineHeatmap";
 import { StatsTrendChart } from "./StatsTrendChart";
@@ -19,13 +19,18 @@ import { Portal } from "../ui/Portal";
 
 interface StatsPanelProps {
   open: boolean;
-  sessions: HistorySessionView[];
   onClose: () => void;
   onOpenSession: (sessionKey: string) => Promise<void>;
 }
 
 const DAY_SESSION_PAGE_SIZE = 120;
 const ALL_PROJECTS_VALUE = "__all_projects__";
+const DATE_INPUT_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+interface DateRangeInput {
+  startDate: string;
+  endDate: string;
+}
 
 function formatCount(value: number): string {
   if (!Number.isFinite(value)) return "0";
@@ -54,6 +59,45 @@ function formatDay(dayStartUtc: number): string {
 function formatDateTime(ts: number | null): string {
   if (!ts || !Number.isFinite(ts)) return "-";
   return DATETIME_FORMATTER.format(new Date(ts));
+}
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentWeekDateRange(): DateRangeInput {
+  const now = new Date();
+  const daysSinceMonday = (now.getDay() + 6) % 7;
+  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceMonday);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return {
+    startDate: formatDateInput(monday),
+    endDate: formatDateInput(today),
+  };
+}
+
+function parseDateInput(value: string, endOfDay: boolean): number | null {
+  const match = DATE_INPUT_PATTERN.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date.getTime();
 }
 
 function makeSessionKey(summary: HistorySessionSummary): string {
@@ -85,49 +129,113 @@ function StatsSkeleton() {
   );
 }
 
-export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPanelProps) {
+export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
   const loadingStats = useHistoryStore((s) => s.loadingStats);
+  const loadingStatsProjectOptions = useHistoryStore((s) => s.loadingStatsProjectOptions);
   const stats = useHistoryStore((s) => s.stats);
   const statsError = useHistoryStore((s) => s.statsError);
+  const statsProjectOptionsError = useHistoryStore((s) => s.statsProjectOptionsError);
   const statsUpdatedAt = useHistoryStore((s) => s.statsUpdatedAt);
   const sourceFilter = useHistoryStore((s) => s.sourceFilter);
+  const projectOptions = useHistoryStore((s) => s.statsProjectOptions);
+  const loadStatsProjectOptions = useHistoryStore((s) => s.loadStatsProjectOptions);
   const loadStats = useHistoryStore((s) => s.loadStats);
 
   const [projectKey, setProjectKey] = useState("");
-  const [rangeDays, setRangeDays] = useState(30);
+  const [projectSelectionTouched, setProjectSelectionTouched] = useState(false);
+  const [projectOptionsReady, setProjectOptionsReady] = useState(false);
+  const [projectSelectionReady, setProjectSelectionReady] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRangeInput>(() => getCurrentWeekDateRange());
+  const [requestedStatsQueryKey, setRequestedStatsQueryKey] = useState<string | null>(null);
   const [selectedDayStart, setSelectedDayStart] = useState<number | null>(null);
   const [dayVisibleCount, setDayVisibleCount] = useState(DAY_SESSION_PAGE_SIZE);
 
-  const projectOptions = useMemo(() => {
-    const projectSet = new Set<string>();
-    for (const item of sessions) {
-      if (item.project_key) projectSet.add(item.project_key);
+  const dateBounds = useMemo(() => {
+    const startAt = parseDateInput(dateRange.startDate, false);
+    const endAt = parseDateInput(dateRange.endDate, true);
+    if (!dateRange.startDate || !dateRange.endDate) {
+      return { startAt, endAt, error: "请选择开始日期和结束日期" };
     }
-    return Array.from(projectSet).sort((a, b) => a.localeCompare(b));
-  }, [sessions]);
+    if (startAt === null || endAt === null) {
+      return { startAt, endAt, error: "日期格式无效" };
+    }
+    if (endAt < startAt) {
+      return { startAt, endAt, error: "结束日期不能早于开始日期" };
+    }
+    return { startAt, endAt, error: null };
+  }, [dateRange.endDate, dateRange.startDate]);
+
+  const dateRangeLabel = dateBounds.error ? "未生效" : `${dateRange.startDate} 至 ${dateRange.endDate}`;
+  const statsQueryKey = useMemo(
+    () => `${sourceFilter}|${projectKey || ALL_PROJECTS_VALUE}|${dateBounds.startAt ?? "invalid"}|${dateBounds.endAt ?? "invalid"}`,
+    [dateBounds.endAt, dateBounds.startAt, projectKey, sourceFilter]
+  );
 
   useEffect(() => {
     if (!open) return;
-    if (projectKey && !projectOptions.includes(projectKey)) {
-      setProjectKey("");
-    }
-  }, [open, projectKey, projectOptions]);
+    let cancelled = false;
+    setProjectOptionsReady(false);
+    setProjectSelectionReady(false);
+    void loadStatsProjectOptions()
+      .catch(() => {
+        // error state is already managed in store
+      })
+      .finally(() => {
+        if (!cancelled) setProjectOptionsReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sourceFilter, loadStatsProjectOptions]);
+
+  useEffect(() => {
+    if (!open) return;
+    setProjectKey("");
+    setProjectSelectionTouched(false);
+    setDateRange(getCurrentWeekDateRange());
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    setProjectSelectionTouched(false);
+  }, [open, sourceFilter]);
+
+  useEffect(() => {
+    if (!open || !projectOptionsReady) return;
+    setProjectKey((prev) => {
+      if (!projectSelectionTouched) return projectOptions[0] ?? "";
+      if (prev === "") return "";
+      if (projectOptions.includes(prev)) return prev;
+      return projectOptions[0] ?? "";
+    });
+    setProjectSelectionReady(true);
+  }, [open, projectOptions, projectOptionsReady, projectSelectionTouched]);
 
   useEffect(() => {
     if (!open) return;
     setSelectedDayStart(null);
     setDayVisibleCount(DAY_SESSION_PAGE_SIZE);
-  }, [open, sourceFilter, projectKey]);
+  }, [open, sourceFilter, projectKey, dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
-    if (!open) return;
-    void loadStats({
+    if (!open || !projectSelectionReady || dateBounds.error) {
+      setRequestedStatsQueryKey(null);
+      return;
+    }
+    if (dateBounds.startAt === null || dateBounds.endAt === null) {
+      setRequestedStatsQueryKey(null);
+      return;
+    }
+    const request = loadStats({
       projectKey: projectKey || null,
-      rangeDays,
-    }).catch(() => {
+      startAt: dateBounds.startAt,
+      endAt: dateBounds.endAt,
+    });
+    setRequestedStatsQueryKey(statsQueryKey);
+    void request.catch(() => {
       // error state is already managed in store
     });
-  }, [open, projectKey, rangeDays, sourceFilter, loadStats]);
+  }, [open, projectSelectionReady, projectKey, sourceFilter, dateBounds, statsQueryKey, loadStats]);
 
   useEffect(() => {
     if (!stats) return;
@@ -155,6 +263,8 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
 
   const sourceLabel = sourceFilter === "all" ? "全部来源" : sourceFilter;
   const projectLabel = projectKey || "全部项目";
+  const waitingForStatsQuery =
+    dateBounds.error === null && (!projectSelectionReady || requestedStatsQueryKey !== statsQueryKey);
 
   if (!open) return null;
 
@@ -188,8 +298,10 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
             value={projectKey || ALL_PROJECTS_VALUE}
             onChange={(e) => {
               const next = e.target.value;
+              setProjectSelectionTouched(true);
               setProjectKey(next === ALL_PROJECTS_VALUE ? "" : next);
             }}
+            disabled={!projectOptionsReady && loadingStatsProjectOptions}
             className="h-8 w-auto min-w-[124px] shrink-0 text-xs"
             aria-label="项目过滤"
           >
@@ -201,27 +313,44 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
             ))}
           </Select>
 
-          <Select
-            value={rangeDays}
-            onChange={(e) => setRangeDays(Number(e.target.value) || 30)}
-            className="h-8 w-auto min-w-[110px] shrink-0 text-xs"
-            aria-label="时间范围"
-          >
-            <option value={7}>最近 7 天</option>
-            <option value={30}>最近 30 天</option>
-            <option value={90}>最近 90 天</option>
-          </Select>
+          <label className="flex items-center gap-1 text-[12px] font-medium text-text-secondary">
+            <span>开始</span>
+            <input
+              type="date"
+              value={dateRange.startDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, startDate: e.target.value }))}
+              className="h-8 min-w-[132px] rounded-md border border-border bg-bg-secondary px-2 text-xs text-text-primary"
+              aria-label="统计开始日期"
+            />
+          </label>
+
+          <label className="flex items-center gap-1 text-[12px] font-medium text-text-secondary">
+            <span>结束</span>
+            <input
+              type="date"
+              value={dateRange.endDate}
+              onChange={(e) => setDateRange((prev) => ({ ...prev, endDate: e.target.value }))}
+              className="h-8 min-w-[132px] rounded-md border border-border bg-bg-secondary px-2 text-xs text-text-primary"
+              aria-label="统计结束日期"
+            />
+          </label>
 
           <Button
             onClick={() => {
-              void loadStats({
+              if (!projectSelectionReady || dateBounds.error) return;
+              if (dateBounds.startAt === null || dateBounds.endAt === null) return;
+              const request = loadStats({
                 projectKey: projectKey || null,
-                rangeDays,
+                startAt: dateBounds.startAt,
+                endAt: dateBounds.endAt,
                 force: true,
-              }).catch(() => {
+              });
+              setRequestedStatsQueryKey(statsQueryKey);
+              void request.catch(() => {
                 // error state is already managed in store
               });
             }}
+            disabled={!projectSelectionReady || dateBounds.error !== null || waitingForStatsQuery}
             aria-label="刷新统计"
             size="sm"
           >
@@ -230,27 +359,37 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
           </Button>
 
           <div className="ml-auto text-[12px] font-medium text-text-secondary">
-            来源：{sourceLabel} ｜ 范围：最近 {rangeDays} 天
+            来源：{sourceLabel} ｜ 范围：{dateRangeLabel}
           </div>
-          <div className="w-full text-[12px] font-medium text-text-secondary">最近刷新：{formatDateTime(statsUpdatedAt)}</div>
+          {dateBounds.error && <div className="w-full text-[12px] font-medium text-danger">{dateBounds.error}</div>}
+          {statsProjectOptionsError && (
+            <div className="w-full text-[12px] font-medium text-danger">项目选项加载失败：{statsProjectOptionsError}</div>
+          )}
+          <div className="w-full text-[12px] font-medium text-text-secondary">最近刷新：{waitingForStatsQuery ? "-" : formatDateTime(statsUpdatedAt)}</div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
-          {loadingStats && !stats && <StatsSkeleton />}
+          {(waitingForStatsQuery || (loadingStats && !stats)) && <StatsSkeleton />}
 
-          {!loadingStats && statsError && (
+          {!waitingForStatsQuery && !loadingStats && statsError && (
             <Card className="bg-bg-secondary p-3 text-[12px] text-danger space-y-2">
               <div>统计加载失败：{statsError}</div>
               <Button
                 onClick={() => {
-                  void loadStats({
+                  if (dateBounds.error) return;
+                  if (dateBounds.startAt === null || dateBounds.endAt === null) return;
+                  const request = loadStats({
                     projectKey: projectKey || null,
-                    rangeDays,
+                    startAt: dateBounds.startAt,
+                    endAt: dateBounds.endAt,
                     force: true,
-                  }).catch(() => {
+                  });
+                  setRequestedStatsQueryKey(statsQueryKey);
+                  void request.catch(() => {
                     // error state is already managed in store
                   });
                 }}
+                disabled={dateBounds.error !== null}
                 size="sm"
               >
                 <RefreshCw size={12} />
@@ -259,7 +398,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
             </Card>
           )}
 
-          {stats && (
+          {!waitingForStatsQuery && stats && (
             <>
               {loadingStats && (
                 <div className="text-[12px] font-medium" style={{ color: "var(--text-muted)" }}>
@@ -291,7 +430,7 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                 <div className="space-y-1.5 text-[12px] leading-6 text-text-secondary">
                   <div>会话数/消息数：按当前来源、项目与时间范围过滤后聚合。</div>
                   <div>Token：来自历史日志 `usage` 字段汇总（缺失 usage 的消息按 0 计）。</div>
-                  <div>当前口径：来源 {sourceLabel}，项目 {projectLabel}，时间 最近 {rangeDays} 天。</div>
+                  <div>当前口径：来源 {sourceLabel}，项目 {projectLabel}，时间 {dateRangeLabel}。</div>
                 </div>
               </Card>
 
@@ -314,9 +453,13 @@ export function StatsPanel({ open, sessions, onClose, onOpenSession }: StatsPane
                   items={stats.project_ranking}
                   selectedProjectKey={projectKey}
                   onSelectProject={(nextProjectKey) => {
+                    setProjectSelectionTouched(true);
                     setProjectKey((prev) => (prev === nextProjectKey ? "" : nextProjectKey));
                   }}
-                  onClearProject={() => setProjectKey("")}
+                  onClearProject={() => {
+                    setProjectSelectionTouched(true);
+                    setProjectKey("");
+                  }}
                 />
 
                 <StatsModelComposition items={stats.model_distribution} />

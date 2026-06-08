@@ -44,8 +44,11 @@ interface HistoryStore {
   searching: boolean;
   loadingPrompts: boolean;
   loadingStats: boolean;
+  loadingStatsProjectOptions: boolean;
   statsError: string | null;
+  statsProjectOptionsError: string | null;
   statsUpdatedAt: number | null;
+  statsCacheKey: string | null;
   sourceFilter: HistorySourceFilter;
   projectPathFilter: string | null;
   sessions: HistorySessionView[];
@@ -58,6 +61,7 @@ interface HistoryStore {
   searchHits: HistorySearchHit[];
   prompts: HistoryPromptItem[];
   stats: HistoryStatsPayload | null;
+  statsProjectOptions: string[];
   focusedMessageIndex: number | null;
   focusedMessageSeq: number;
   metaMap: SessionMetaMap;
@@ -84,9 +88,12 @@ interface HistoryStore {
     sessionKey?: string | null;
     limit?: number;
   }) => Promise<void>;
+  loadStatsProjectOptions: (options?: { force?: boolean }) => Promise<string[]>;
   loadStats: (options?: {
     projectKey?: string | null;
     rangeDays?: number;
+    startAt?: number | null;
+    endAt?: number | null;
     force?: boolean;
   }) => Promise<void>;
   openSessionAtMessage: (sessionKey: string, messageIndex: number) => Promise<void>;
@@ -99,16 +106,23 @@ interface HistoryStore {
 const SESSION_PAGE_SIZE = 100;
 const SESSION_PAGE_FETCH_LIMIT = SESSION_PAGE_SIZE + 1;
 const DEFAULT_SEARCH_LIMIT = 120;
-const STATS_CACHE_TTL_MS = 15_000;
+const STATS_CACHE_TTL_MS = 5 * 60 * 1000;
 const STATS_CACHE_MAX = 16;
+const STATS_PROJECT_OPTIONS_CACHE_MAX = 8;
 
 interface StatsCacheEntry {
   payload: HistoryStatsPayload;
   cachedAt: number;
-  sessionsFingerprint: string;
+}
+
+interface StatsProjectOptionsCacheEntry {
+  options: string[];
+  cachedAt: number;
 }
 
 const statsCache = new Map<string, StatsCacheEntry>();
+const statsProjectOptionsCache = new Map<string, StatsProjectOptionsCacheEntry>();
+let statsRequestSeq = 0;
 
 function statsCacheGet(key: string): StatsCacheEntry | undefined {
   const entry = statsCache.get(key);
@@ -128,6 +142,25 @@ function statsCacheSet(key: string, entry: StatsCacheEntry): void {
     if (oldestKey !== undefined) statsCache.delete(oldestKey);
   }
   statsCache.set(key, entry);
+}
+
+function statsProjectOptionsCacheGet(key: string): StatsProjectOptionsCacheEntry | undefined {
+  const entry = statsProjectOptionsCache.get(key);
+  if (entry) {
+    statsProjectOptionsCache.delete(key);
+    statsProjectOptionsCache.set(key, entry);
+  }
+  return entry;
+}
+
+function statsProjectOptionsCacheSet(key: string, entry: StatsProjectOptionsCacheEntry): void {
+  if (statsProjectOptionsCache.has(key)) {
+    statsProjectOptionsCache.delete(key);
+  } else if (statsProjectOptionsCache.size >= STATS_PROJECT_OPTIONS_CACHE_MAX) {
+    const oldestKey = statsProjectOptionsCache.keys().next().value;
+    if (oldestKey !== undefined) statsProjectOptionsCache.delete(oldestKey);
+  }
+  statsProjectOptionsCache.set(key, entry);
 }
 
 function asString(value: unknown): string {
@@ -340,6 +373,16 @@ function normalizeStats(raw: unknown): HistoryStatsPayload {
   };
 }
 
+function normalizeStatsProjectOptions(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const projectSet = new Set<string>();
+  for (const item of raw) {
+    const project = asString(item).trim();
+    if (project) projectSet.add(project);
+  }
+  return Array.from(projectSet).sort((a, b) => a.localeCompare(b));
+}
+
 function normalizeSourceFilter(filter: HistorySourceFilter): HistorySource | null {
   if (filter === "all") return null;
   return filter;
@@ -362,24 +405,27 @@ function makeSessionKey(source: HistorySource, sessionId: string, filePath: stri
   return `${source}:${sessionId}:${filePath}`;
 }
 
+function makeStatsProjectOptionsCacheKey(
+  source: HistorySourceFilter,
+  historyPathKey: string
+): string {
+  return `${source}|${historyPathKey}`;
+}
+
 function makeStatsCacheKey(
   source: HistorySourceFilter,
   projectKey: string | null,
-  rangeDays: number,
+  timeKey: string,
   historyPathKey: string
 ): string {
-  return `${source}|${projectKey ?? "__all__"}|${rangeDays}|${historyPathKey}`;
+  return `${source}|${projectKey ?? "__all__"}|${timeKey}|${historyPathKey}`;
 }
 
-function sessionsFingerprint(sessions: HistorySessionView[]): string {
-  if (sessions.length === 0) return "0:0";
-  let maxUpdatedAt = 0;
-  for (const session of sessions) {
-    if (session.updated_at > maxUpdatedAt) {
-      maxUpdatedAt = session.updated_at;
-    }
+function makeStatsTimeKey(rangeDays: number, startAt: number | null, endAt: number | null): string {
+  if (startAt !== null && endAt !== null) {
+    return `absolute:${startAt}:${endAt}`;
   }
-  return `${sessions.length}:${maxUpdatedAt}`;
+  return `range:${rangeDays}`;
 }
 
 function parseTags(tagsJson: string): string[] {
@@ -459,8 +505,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   searching: false,
   loadingPrompts: false,
   loadingStats: false,
+  loadingStatsProjectOptions: false,
   statsError: null,
+  statsProjectOptionsError: null,
   statsUpdatedAt: null,
+  statsCacheKey: null,
   sourceFilter: "all",
   projectPathFilter: null,
   sessions: [],
@@ -473,6 +522,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   searchHits: [],
   prompts: [],
   stats: null,
+  statsProjectOptions: [],
   focusedMessageIndex: null,
   focusedMessageSeq: 0,
   metaMap: {},
@@ -803,42 +853,119 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
   },
 
-  loadStats: async (options) => {
-    const projectKey = options?.projectKey?.trim() || null;
-    const rangeDays = options?.rangeDays ?? 30;
+  loadStatsProjectOptions: async (options) => {
     const force = options?.force ?? false;
     const sourceFilter = get().sourceFilter;
     const historyPathArgs = getHistoryPathArgs();
     const historyPathKey = getHistoryPathCacheKey();
-    const cacheKey = makeStatsCacheKey(sourceFilter, projectKey, rangeDays, historyPathKey);
+    const cacheKey = makeStatsProjectOptionsCacheKey(sourceFilter, historyPathKey);
     const now = Date.now();
-    const fingerprint = sessionsFingerprint(get().sessions);
+    const cached = statsProjectOptionsCacheGet(cacheKey);
+
+    if (!force && cached && now - cached.cachedAt <= STATS_CACHE_TTL_MS) {
+      set({
+        statsProjectOptions: cached.options,
+        statsProjectOptionsError: null,
+      });
+      return cached.options;
+    }
+
+    set({ loadingStatsProjectOptions: true, statsProjectOptionsError: null });
+    try {
+      const source = normalizeSourceFilter(sourceFilter);
+      const raw = await invoke<unknown>("history_list_stats_projects", {
+        source,
+        ...historyPathArgs,
+      });
+      const projectOptions = normalizeStatsProjectOptions(raw);
+      statsProjectOptionsCacheSet(cacheKey, {
+        options: projectOptions,
+        cachedAt: Date.now(),
+      });
+      set({
+        statsProjectOptions: projectOptions,
+        statsProjectOptionsError: null,
+      });
+      return projectOptions;
+    } catch (err) {
+      set({ statsProjectOptions: [], statsProjectOptionsError: String(err) });
+      throw err;
+    } finally {
+      set({ loadingStatsProjectOptions: false });
+    }
+  },
+
+  loadStats: async (options) => {
+    const projectKey = options?.projectKey?.trim() || null;
+    const rangeDays = options?.rangeDays ?? 30;
+    const startAt = typeof options?.startAt === "number" && Number.isFinite(options.startAt) ? options.startAt : null;
+    const endAt = typeof options?.endAt === "number" && Number.isFinite(options.endAt) ? options.endAt : null;
+    const force = options?.force ?? false;
+    const sourceFilter = get().sourceFilter;
+    const historyPathArgs = getHistoryPathArgs();
+    const historyPathKey = getHistoryPathCacheKey();
+    const timeKey = makeStatsTimeKey(rangeDays, startAt, endAt);
+    const cacheKey = makeStatsCacheKey(sourceFilter, projectKey, timeKey, historyPathKey);
+    const now = Date.now();
     const cached = statsCacheGet(cacheKey);
+    const activeStats = get().stats;
+    const activeStatsUpdatedAt = get().statsUpdatedAt;
+    const activeCacheKey = get().statsCacheKey;
+    const requestSeq = ++statsRequestSeq;
+    const isLatestRequest = () => statsRequestSeq === requestSeq && get().statsCacheKey === cacheKey;
     const stopPerf = createPerfMarker("stats.load", {
       sourceFilter,
       projectKey: projectKey ?? "__all__",
       rangeDays,
+      startAt: startAt ?? "__range__",
+      endAt: endAt ?? "__range__",
     });
 
-    if (
-      !force &&
-      cached &&
-      cached.sessionsFingerprint === fingerprint &&
-      now - cached.cachedAt <= STATS_CACHE_TTL_MS
-    ) {
+    if (!force && cached) {
+      const cacheIsFresh = now - cached.cachedAt <= STATS_CACHE_TTL_MS;
       set({
+        loadingStats: !cacheIsFresh,
         stats: cached.payload,
         statsError: null,
         statsUpdatedAt: cached.cachedAt,
+        statsCacheKey: cacheKey,
       });
+      if (cacheIsFresh) {
+        stopPerf({
+          cacheHit: true,
+          heatmapDays: cached.payload.heatmap.length,
+        });
+        return;
+      }
+    } else if (
+      !force &&
+      activeStats &&
+      activeCacheKey === cacheKey &&
+      activeStatsUpdatedAt &&
+      now - activeStatsUpdatedAt <= STATS_CACHE_TTL_MS
+    ) {
+      set({ loadingStats: false, statsError: null, statsCacheKey: cacheKey });
       stopPerf({
         cacheHit: true,
-        heatmapDays: cached.payload.heatmap.length,
+        heatmapDays: activeStats.heatmap.length,
       });
       return;
     }
 
-    set({ loadingStats: true, statsError: null });
+    const canKeepVisibleStats = activeStats !== null && activeCacheKey === cacheKey;
+    const visibleStats = canKeepVisibleStats ? activeStats : !force && cached ? cached.payload : null;
+    const visibleStatsUpdatedAt = canKeepVisibleStats
+      ? activeStatsUpdatedAt
+      : !force && cached
+        ? cached.cachedAt
+        : null;
+    set({
+      loadingStats: true,
+      statsError: null,
+      stats: visibleStats,
+      statsUpdatedAt: visibleStatsUpdatedAt,
+      statsCacheKey: cacheKey,
+    });
     try {
       const source = normalizeSourceFilter(sourceFilter);
       const statsRaw = await invoke<unknown>("history_get_stats", {
@@ -846,32 +973,43 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         ...historyPathArgs,
         projectKey,
         rangeDays,
+        startAt,
+        endAt,
+        force,
       });
       const payload = normalizeStats(statsRaw);
       const cachedAt = Date.now();
       statsCacheSet(cacheKey, {
         payload,
         cachedAt,
-        sessionsFingerprint: fingerprint,
       });
-      set({
-        stats: payload,
-        statsError: null,
-        statsUpdatedAt: cachedAt,
-      });
+      const isCurrent = isLatestRequest();
+      if (isCurrent) {
+        set({
+          stats: payload,
+          statsError: null,
+          statsUpdatedAt: cachedAt,
+          statsCacheKey: cacheKey,
+        });
+      }
       stopPerf({
         cacheHit: false,
         heatmapDays: payload.heatmap.length,
+        ignored: !isCurrent,
       });
     } catch (err) {
-      set({ statsError: String(err) });
+      if (isLatestRequest()) {
+        set({ statsError: String(err) });
+      }
       stopPerf({
         cacheHit: false,
         error: String(err),
       });
       throw err;
     } finally {
-      set({ loadingStats: false });
+      if (isLatestRequest()) {
+        set({ loadingStats: false });
+      }
     }
   },
 
