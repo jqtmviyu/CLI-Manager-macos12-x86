@@ -742,6 +742,7 @@ interface PaneLeafViewProps {
   onMoveToPane: (sessionId: string, paneId: string) => void;
   onHideBackground: (sessionId: string) => void;
   onShowBackground: (sessionId: string) => void;
+  toolbarActions?: ReactNode;
   hideTabBar?: boolean;
 }
 
@@ -775,6 +776,7 @@ function PaneLeafView({
   onMoveToPane,
   onHideBackground,
   onShowBackground,
+  toolbarActions,
   hideTabBar = false,
 }: PaneLeafViewProps) {
   const paneSessions = pane.sessionIds
@@ -806,10 +808,11 @@ function PaneLeafView({
           onMoveToPane={onMoveToPane}
           onHideBackground={onHideBackground}
           onShowBackground={onShowBackground}
+          toolbarActions={toolbarActions}
         />
       )}
       <div
-        className="relative min-h-0 flex-1 overflow-hidden"
+        className="ui-terminal-pane-content relative min-h-0 flex-1 overflow-hidden"
         onMouseDownCapture={() => {
           if (pane.activeSessionId && pane.activeSessionId !== activeSessionId) onActivateSession(pane.activeSessionId);
         }}
@@ -1245,6 +1248,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       onMoveToPane={moveSessionToPane}
       onHideBackground={hideBackgroundForSession}
       onShowBackground={showBackgroundForSession}
+      toolbarActions={renderToolbarActions()}
       hideTabBar={false}
     />
   ), [
@@ -1266,6 +1270,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     lightThemePalette,
     moveSessionToPane,
     renameSession,
+    renderToolbarActions,
     resolvedTheme,
     sessions,
     showBackgroundForSession,
@@ -1290,10 +1295,6 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
         onClose={handleCloseSplitPicker}
         shouldIgnoreOutsideInteraction={shouldIgnoreSplitPickerOutsideInteraction}
       />
-
-      <div className="ui-terminal-chrome ui-terminal-global-chrome flex h-10 shrink-0 items-center justify-end" data-chrome-variant="global">
-        {renderToolbarActions()}
-      </div>
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
         {historyOpen && (
