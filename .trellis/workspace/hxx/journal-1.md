@@ -277,3 +277,36 @@ Fixed Windows PowerShell terminal history disappearing after resize/tab changes 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Fix Chinese IME punctuation input
+
+**Date**: 2026-06-11
+**Task**: Fix Chinese IME punctuation input
+**Branch**: `master`
+
+### Summary
+
+Fixed Chinese IME punctuation requiring two inputs by keeping xterm helper textarea offscreen but measurable at 1x1, updated frontend terminal guideline and changelog, and validated with TypeScript typecheck plus Trellis check.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `308da34` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
