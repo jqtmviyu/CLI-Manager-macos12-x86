@@ -32,6 +32,9 @@ export type CloseBehavior = "ask" | "minimize" | "exit";
 export const UI_FONT_SIZE_MIN = 11;
 export const UI_FONT_SIZE_MAX = 18;
 export const UI_FONT_SIZE_DEFAULT = 13;
+export const TERMINAL_SCROLLBACK_ROWS_MIN = 1000;
+export const TERMINAL_SCROLLBACK_ROWS_MAX = 50000;
+export const TERMINAL_SCROLLBACK_ROWS_DEFAULT = 5000;
 export type ShortcutAction =
   | "newTerminal"
   | "closeTerminal"
@@ -120,6 +123,7 @@ interface Settings {
   lightThemePalette: LightThemePalette;
   darkThemePalette: DarkThemePalette;
   fontSize: number;
+  terminalScrollbackRows: number;
   fontFamily: string;
   uiFontFamily: string;
   uiFontSize: number;
@@ -170,6 +174,7 @@ const DEFAULTS: Settings = {
   lightThemePalette: "warm-paper",
   darkThemePalette: "night-indigo",
   fontSize: 14,
+  terminalScrollbackRows: TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   fontFamily: "Cascadia Code, Consolas, monospace",
   uiFontFamily:
     "\"Segoe UI Variable\", \"Segoe UI\", -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
@@ -414,6 +419,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       UI_FONT_SIZE_MIN,
       UI_FONT_SIZE_MAX,
       DEFAULTS.uiFontSize
+    );
+    entries.terminalScrollbackRows = clampNumber(
+      entries.terminalScrollbackRows,
+      TERMINAL_SCROLLBACK_ROWS_MIN,
+      TERMINAL_SCROLLBACK_ROWS_MAX,
+      DEFAULTS.terminalScrollbackRows
     );
 
     entries.keyboardShortcuts = migrateKeyboardShortcuts(entries.keyboardShortcuts);

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ActionIcon,
   Badge,
   Box,
   Card,
@@ -13,8 +14,10 @@ import {
   Switch,
   Text,
   TextInput,
+  Tooltip,
   UnstyledButton,
 } from "@mantine/core";
+import { CircleHelp } from "lucide-react";
 import {
   TERMINAL_THEME_GROUPS,
   TERMINAL_THEME_PRESETS,
@@ -23,7 +26,13 @@ import {
 } from "../../../lib/terminalThemes";
 import { normalizeShellKey } from "../../../lib/shell";
 import { SHELL_OPTIONS } from "../../../lib/types";
-import { useSettingsStore, type UnsplitBehavior } from "../../../stores/settingsStore";
+import {
+  TERMINAL_SCROLLBACK_ROWS_DEFAULT,
+  TERMINAL_SCROLLBACK_ROWS_MAX,
+  TERMINAL_SCROLLBACK_ROWS_MIN,
+  useSettingsStore,
+  type UnsplitBehavior,
+} from "../../../stores/settingsStore";
 import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
 
 const SWATCH_KEYS = ["background", "foreground", "red", "green", "blue", "cyan"] as const;
@@ -48,6 +57,11 @@ function clampFontSize(value: number) {
   return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, value));
 }
 
+function clampTerminalScrollbackRows(value: number) {
+  if (!Number.isFinite(value)) return TERMINAL_SCROLLBACK_ROWS_DEFAULT;
+  return Math.min(TERMINAL_SCROLLBACK_ROWS_MAX, Math.max(TERMINAL_SCROLLBACK_ROWS_MIN, Math.round(value)));
+}
+
 export function ThemeSettingsPage() {
   const terminalThemeMode = useSettingsStore((s) => s.terminalThemeMode);
   const terminalThemeName = useSettingsStore((s) => s.terminalThemeName);
@@ -55,6 +69,7 @@ export function ThemeSettingsPage() {
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const fontSize = useSettingsStore((s) => s.fontSize);
+  const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
   const defaultShell = useSettingsStore((s) => s.defaultShell);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
@@ -64,10 +79,15 @@ export function ThemeSettingsPage() {
   const update = useSettingsStore((s) => s.update);
   const [query, setQuery] = useState("");
   const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
+  const [terminalScrollbackRowsDraft, setTerminalScrollbackRowsDraft] = useState(terminalScrollbackRows);
 
   useEffect(() => {
     setFontSizeDraft(fontSize);
   }, [fontSize]);
+
+  useEffect(() => {
+    setTerminalScrollbackRowsDraft(terminalScrollbackRows);
+  }, [terminalScrollbackRows]);
 
   const autoThemeId = useMemo(
     () => resolveAutoTerminalThemeId(resolvedTheme, lightThemePalette, darkThemePalette),
@@ -130,6 +150,13 @@ export function ThemeSettingsPage() {
     setFontSizeDraft(next);
     if (next !== fontSize) {
       void update("fontSize", next);
+    }
+  };
+  const commitTerminalScrollbackRows = (value = terminalScrollbackRowsDraft) => {
+    const next = clampTerminalScrollbackRows(value);
+    setTerminalScrollbackRowsDraft(next);
+    if (next !== terminalScrollbackRows) {
+      void update("terminalScrollbackRows", next);
     }
   };
 
@@ -235,6 +262,66 @@ export function ThemeSettingsPage() {
               />
               <Text size="xs" c="var(--text-muted)">
                 仅影响内置终端，不改变应用界面字体。
+              </Text>
+            </Stack>
+
+            <Stack gap={6}>
+              <Group justify="space-between" align="center">
+                <Group gap={6}>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    终端回滚行数
+                  </Text>
+                  <Tooltip
+                    multiline
+                    w={320}
+                    label={
+                      <Stack gap={4}>
+                        <Text size="xs" c="inherit">内存占用：行数越大，每个终端占用越高。</Text>
+                        <Text size="xs" c="inherit">多终端影响：同时开很多 Codex/Claude 会话时更明显。</Text>
+                        <Text size="xs" c="inherit">
+                          Codex TUI 限制：Codex 主动清屏/重绘的内容不保证全部进 scrollback，但能明显改善普通回滚长度。
+                        </Text>
+                      </Stack>
+                    }
+                  >
+                    <ActionIcon
+                      variant="subtle"
+                      color="gray"
+                      size="xs"
+                      radius="xl"
+                      aria-label="终端回滚行数说明"
+                    >
+                      <CircleHelp size={14} strokeWidth={1.8} />
+                    </ActionIcon>
+                  </Tooltip>
+                </Group>
+                <NumberInput
+                  min={TERMINAL_SCROLLBACK_ROWS_MIN}
+                  max={TERMINAL_SCROLLBACK_ROWS_MAX}
+                  step={1000}
+                  value={terminalScrollbackRowsDraft}
+                  onChange={(value) => setTerminalScrollbackRowsDraft(typeof value === "number" ? value : Number(value))}
+                  onBlur={() => commitTerminalScrollbackRows()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitTerminalScrollbackRows();
+                  }}
+                  size="xs"
+                  w={104}
+                  aria-label="终端回滚行数数值"
+                />
+              </Group>
+              <Slider
+                min={TERMINAL_SCROLLBACK_ROWS_MIN}
+                max={TERMINAL_SCROLLBACK_ROWS_MAX}
+                step={1000}
+                value={terminalScrollbackRowsDraft}
+                onChange={setTerminalScrollbackRowsDraft}
+                onChangeEnd={(value) => commitTerminalScrollbackRows(value)}
+                color="cliPrimary"
+                aria-label="终端回滚行数滑杆"
+              />
+              <Text size="xs" c="var(--text-muted)">
+                控制内置终端可向上回看的历史行数。
               </Text>
             </Stack>
 

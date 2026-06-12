@@ -5,6 +5,7 @@ import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { useShallow } from "zustand/shallow";
 import { applyTransparency, getTerminalTheme, getTerminalBackground } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
@@ -103,6 +104,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
   const cursorShowTimerRef = useRef<number | null>(null);
   const INACTIVE_BUFFER_MAX = 256 * 1024;
   const runtimeOscBufferRef = useRef("");
+  const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
 
   const background = useSettingsStore(
     useShallow((s) => ({
@@ -298,7 +300,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
     }
   };
 
-  // Hot-update theme / fontSize / fontFamily without recreating the terminal.
+  // Hot-update terminal options without recreating the terminal.
   // `isTransparent` is in the dep array so toggling the background image
   // immediately recomputes the theme (otherwise the WebGL clear color stays
   // opaque and the image-bearing pseudo-elements get painted over).
@@ -316,7 +318,10 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       terminal.options.fontFamily = fontFamily;
       scheduleFit(true);
     }
-  }, [fontSize, fontFamily, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken]);
+    if (terminal.options.scrollback !== terminalScrollbackRows) {
+      terminal.options.scrollback = terminalScrollbackRows;
+    }
+  }, [fontSize, fontFamily, terminalScrollbackRows, resolvedTheme, terminalThemeName, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken]);
 
   // Refit terminal when tab becomes active
   useEffect(() => {
@@ -352,7 +357,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       cursorStyle: "block",
       fontSize,
       fontFamily,
-      scrollback: 5000,
+      scrollback: terminalScrollbackRows,
       scrollOnEraseInDisplay: true,
       allowProposedApi: true,
       windowsPty: { backend: "conpty" },
@@ -362,6 +367,16 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       // when the user enables/disables the background image.
       allowTransparency: true,
       theme: isTransparentRef.current ? applyTransparency(baseTheme, background.overlayDarken) : baseTheme,
+      // OSC 8 超链接（codex 等 CLI 输出）默认点击行为是 window.open，在 Tauri
+      // webview 里会被拦成"是否导航"确认框。接管为系统默认浏览器打开，仅放行
+      // http/https，避免恶意 scheme。
+      linkHandler: {
+        activate: (_event, uri) => {
+          if (/^https?:\/\//i.test(uri)) {
+            void openUrl(uri).catch((err) => logError("Failed to open terminal link", { sessionId, uri, err }));
+          }
+        },
+      },
     });
 
     const fitAddon = new FitAddon();
@@ -671,12 +686,47 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
 
     const resolveCompositionAnchorCell = () => {
       const buffer = terminal.buffer.active;
+      const inputPromptPattern = /^(?:[>$#\u203a]|PS(?:\s|>))/u;
       const clampX = (x: number) => Math.min(Math.max(0, x), Math.max(0, terminal.cols - 1));
       const clampY = (y: number) => Math.min(Math.max(0, y), Math.max(0, terminal.rows - 1));
-      return {
+      const cursor = {
         x: clampX(buffer.cursorX),
         y: clampY(buffer.cursorY),
       };
+
+      const getInputAnchorCell = (row: number) => {
+        const line = buffer.getLine(buffer.viewportY + row);
+        if (!line) return null;
+        const text = line.translateToString(true);
+        const trimmed = text.trimStart();
+        if (!trimmed || !inputPromptPattern.test(trimmed)) return null;
+
+        for (let x = Math.min(terminal.cols, line.length) - 1; x >= 0; x -= 1) {
+          const cell = line.getCell(x);
+          if (!cell || !cell.getChars().trim()) continue;
+          return { x: clampX(x + Math.max(1, cell.getWidth())), y: row };
+        }
+
+        return { x: clampX(text.length + 1), y: row };
+      };
+
+      if (getInputAnchorCell(cursor.y)) return cursor;
+
+      for (let offset = 1; offset < terminal.rows; offset += 1) {
+        const upperRow = cursor.y - offset;
+        if (upperRow >= 0) {
+          const anchor = getInputAnchorCell(upperRow);
+          if (anchor) return anchor;
+        }
+
+        const lowerRow = cursor.y + offset;
+        if (lowerRow < terminal.rows) {
+          const anchor = getInputAnchorCell(lowerRow);
+          if (anchor) return anchor;
+        }
+      }
+
+      return cursor;
     };
 
     const applyCompositionAnchorFix = () => {
@@ -745,17 +795,11 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       });
     };
 
-    const releaseHelperTextareaAnchorPin = () => {
+    const cancelHelperTextareaAnchorPin = () => {
       if (helperTextareaAnchorRafId !== null) {
         cancelAnimationFrame(helperTextareaAnchorRafId);
         helperTextareaAnchorRafId = null;
       }
-      if (!textarea) return;
-      textarea.style.left = "";
-      textarea.style.top = "";
-      textarea.style.width = "";
-      textarea.style.height = "";
-      textarea.style.lineHeight = "";
     };
 
     scheduleHelperTextareaAnchorPin();
@@ -771,15 +815,20 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       scheduleTerminalContainerScrollReset();
       scheduleHelperTextareaAnchorPin();
     });
+    const renderDisposable = terminal.onRender(() => {
+      if (!isComposingRef.current) return;
+      scheduleCompositionScrollRestore();
+      scheduleCompositionAnchorFix();
+    });
 
     const onCompositionStart = () => {
       isComposingRef.current = true;
       // Freeze the anchor at the cell where typing began. The buffer cursor is
       // trustworthy at this instant (the user just placed the caret here), and
-      // it must not be re-read afterwards — a compact progress bar can move the
-      // hardware cursor mid-composition without the input position changing.
+      // it must not be re-read afterwards — TUI redraws can move the hardware
+      // cursor mid-composition without the input position changing.
       compositionAnchorCell = resolveCompositionAnchorCell();
-      releaseHelperTextareaAnchorPin();
+      cancelHelperTextareaAnchorPin();
       captureCompositionScroll();
       scheduleCompositionScrollRestore();
       scheduleCompositionAnchorFix();
@@ -840,6 +889,7 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
       textarea?.removeEventListener("compositionend", onCompositionEnd);
       terminalContainer.removeEventListener("scroll", scheduleTerminalContainerScrollReset);
       cursorMoveDisposable.dispose();
+      renderDisposable.dispose();
       wheelTarget.removeEventListener("wheel", onWheel, { capture: true } as EventListenerOptions);
       resizeObserver.disconnect();
       if (fitRafRef.current !== null) {
