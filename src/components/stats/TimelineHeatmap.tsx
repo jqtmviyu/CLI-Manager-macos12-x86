@@ -5,6 +5,7 @@ interface TimelineHeatmapProps {
   days: HistoryStatsHeatmapDay[];
   selectedDayStart: number | null;
   onSelectDay: (day: HistoryStatsHeatmapDay) => void;
+  granularity?: "day" | "hour";
 }
 
 // 模块级 formatter 单例：原代码在 N 个 cell 上各 toLocaleDateString，每次都新建 ICU formatter。
@@ -19,6 +20,16 @@ function formatDay(dayStartUtc: number): string {
   return DAY_FORMATTER.format(new Date(dayStartUtc));
 }
 
+function formatHour(hourStartUtc: number): string {
+  if (!Number.isFinite(hourStartUtc) || hourStartUtc <= 0) return "-";
+  const date = new Date(hourStartUtc);
+  return `${String(date.getHours()).padStart(2, "0")}:00`;
+}
+
+function formatBucket(dayStartUtc: number, granularity: "day" | "hour"): string {
+  return granularity === "hour" ? formatHour(dayStartUtc) : formatDay(dayStartUtc);
+}
+
 function cellColor(level: number): string {
   if (level <= 0) return "var(--bg-tertiary)";
   if (level === 1) return "color-mix(in srgb, var(--accent) 24%, var(--bg-tertiary))";
@@ -29,14 +40,27 @@ function cellColor(level: number): string {
 
 export const TimelineHeatmap = memo(TimelineHeatmapImpl);
 
-function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHeatmapProps) {
+function TimelineHeatmapImpl({
+  days,
+  selectedDayStart,
+  onSelectDay,
+  granularity = "day",
+}: TimelineHeatmapProps) {
   const [hoverDayStart, setHoverDayStart] = useState<number | null>(null);
+  const title = granularity === "hour" ? "时段热力图" : "日活热力图（C6）";
+  const gridClass =
+    granularity === "hour"
+      ? "grid grid-cols-12 gap-1 min-w-[214px]"
+      : "grid grid-flow-col auto-cols-[14px] grid-rows-7 gap-1 min-w-max";
 
   const cells = useMemo(() => {
     if (days.length === 0) {
       return [] as Array<
         { type: "pad" } | { type: "day"; day: HistoryStatsHeatmapDay; dayIndex: number }
       >;
+    }
+    if (granularity === "hour") {
+      return days.map((day, dayIndex) => ({ type: "day" as const, day, dayIndex }));
     }
     const first = new Date(days[0].day_start_utc);
     const mondayBasedWeekday = (first.getDay() + 6) % 7;
@@ -45,7 +69,7 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
     }));
     const dayCells = days.map((day, dayIndex) => ({ type: "day" as const, day, dayIndex }));
     return [...placeholders, ...dayCells];
-  }, [days]);
+  }, [days, granularity]);
 
   const activeDay = useMemo(() => {
     const activeKey = hoverDayStart ?? selectedDayStart;
@@ -59,7 +83,7 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
   if (days.length === 0) {
     return (
       <div className="rounded-md border border-border bg-bg-secondary p-3">
-        <div className="mb-2 text-xs font-semibold text-text-primary">日活热力图（C6）</div>
+        <div className="mb-2 text-xs font-semibold text-text-primary">{title}</div>
         <div className="py-8 text-center text-[11px] text-text-muted">
           当前过滤条件下暂无热力图数据
         </div>
@@ -70,10 +94,10 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
   return (
     <div className="rounded-md border border-border bg-bg-secondary p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">日活热力图（C6）</div>
+        <div className="text-xs font-semibold text-text-primary">{title}</div>
         <div className="ml-auto text-[11px] text-text-secondary">
           {activeDay
-            ? `${formatDay(activeDay.day_start_utc)} · ${activeDay.sessions} 会话 · ${activeDay.messages} 消息`
+            ? `${formatBucket(activeDay.day_start_utc, granularity)} · ${activeDay.sessions} 会话 · ${activeDay.messages} 消息`
             : "-"}
         </div>
       </div>
@@ -83,9 +107,9 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
         onMouseLeave={() => setHoverDayStart(null)}
       >
         <div
-          className="grid grid-flow-col auto-cols-[14px] grid-rows-7 gap-1 min-w-max"
+          className={gridClass}
           role="group"
-          aria-label={`最近 ${days.length} 天活跃热力图`}
+          aria-label={granularity === "hour" ? "24 小时活跃热力图" : `最近 ${days.length} 天活跃热力图`}
         >
           {cells.map((item, idx) => {
             if (item.type === "pad") {
@@ -115,8 +139,8 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
                     ? "0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent)"
                     : "none",
                 }}
-                aria-label={`${formatDay(day.day_start_utc)}，${day.sessions} 会话，${day.messages} 消息`}
-                title={`${formatDay(day.day_start_utc)} · ${day.sessions} 会话 · ${day.messages} 消息`}
+                aria-label={`${formatBucket(day.day_start_utc, granularity)}，${day.sessions} 会话，${day.messages} 消息`}
+                title={`${formatBucket(day.day_start_utc, granularity)} · ${day.sessions} 会话 · ${day.messages} 消息`}
                 data-day-index={dayIndex}
                 onMouseEnter={() => setHoverDayStart(day.day_start_utc)}
                 onFocus={() => setHoverDayStart(day.day_start_utc)}
@@ -128,10 +152,10 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
                     return;
                   }
                   let delta = 0;
-                  if (event.key === "ArrowLeft") delta = -7;
-                  if (event.key === "ArrowRight") delta = 7;
-                  if (event.key === "ArrowUp") delta = -1;
-                  if (event.key === "ArrowDown") delta = 1;
+                  if (event.key === "ArrowLeft") delta = granularity === "hour" ? -1 : -7;
+                  if (event.key === "ArrowRight") delta = granularity === "hour" ? 1 : 7;
+                  if (event.key === "ArrowUp") delta = granularity === "hour" ? -12 : -1;
+                  if (event.key === "ArrowDown") delta = granularity === "hour" ? 12 : 1;
                   if (delta === 0) return;
                   event.preventDefault();
                   const nextIndex = Math.max(0, Math.min(days.length - 1, dayIndex + delta));
@@ -163,8 +187,8 @@ function TimelineHeatmapImpl({ days, selectedDayStart, onSelectDay }: TimelineHe
         </div>
       </div>
       <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
-        <span>{formatDay(days[0]?.day_start_utc ?? 0)}</span>
-        <span>{formatDay(days[days.length - 1]?.day_start_utc ?? 0)}</span>
+        <span>{formatBucket(days[0]?.day_start_utc ?? 0, granularity)}</span>
+        <span>{formatBucket(days[days.length - 1]?.day_start_utc ?? 0, granularity)}</span>
       </div>
     </div>
   );

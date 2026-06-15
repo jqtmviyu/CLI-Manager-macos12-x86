@@ -24,7 +24,22 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
     for (const item of items) byHour.set(item.hour, item);
     const full: HistoryStatsHourlyActivityItem[] = [];
     for (let hour = 0; hour < 24; hour += 1) {
-      full.push(byHour.get(hour) ?? { hour, sessions: 0, messages: 0 });
+      full.push(
+        byHour.get(hour) ?? {
+          hour,
+          hour_start_utc: 0,
+          sessions: 0,
+          messages: 0,
+          level: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          total_cost_usd: 0,
+          unpriced_tokens: 0,
+          session_refs: [],
+        }
+      );
     }
     return full;
   }, [items]);
