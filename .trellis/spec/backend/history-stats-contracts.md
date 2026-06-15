@@ -97,7 +97,8 @@ interface TerminalSession {
 - Unknown or unsupported models must not fake a price. They contribute to `unpriced_tokens` and `total_cost_usd` remains unaffected unless an explicit cost exists in the source payload.
 - Explicit cost fields from the source payload take priority over local model-price estimation. Explicit cost and token counts may live on different JSON levels (e.g. top-level `costUSD` + `message.usage`); extraction must merge them instead of returning the first matching candidate.
 - Codex session project keys should prefer session metadata `cwd`; path-derived keys are only a fallback.
-- Terminal realtime stats should prefer the current terminal's `TerminalSession.cliSessionId` from CLI hook payload over project-level "latest session" lookup. If no CLI session id is available or no matching history session is found, fall back to the existing latest-session-by-project behavior.
+- Terminal realtime stats bind strictly to the current terminal's `TerminalSession.cliSessionId` (from CLI hook payload). When a session id is present, look up **only** that session; if it is not yet found in history (e.g. JSONL not flushed), keep that terminal's own empty/loading state and **never** fall back to a different session. Project-level "latest session" lookup is used only when the terminal has no session id at all.
+- When the CLI hook chain is known to be active (any terminal has bound a `cliSessionId` this run) but the current CLI terminal has not yet received its own id, the realtime panel shows an explicit "awaiting session identification" empty state instead of borrowing the project's latest session — so newly opened sessions never display a neighbor window's data. Only a true no-hook environment (no terminal ever bound an id) keeps the project latest-session fallback.
 - Stats date ranges may cover up to 366 days and must reject larger ranges with `date_range_too_large`.
 - History index builds scan cache-miss files in parallel (`std::thread::scope`, worker count = `available_parallelism`); fingerprint-hit entries must still be reused without rescanning.
 
@@ -110,7 +111,9 @@ interface TerminalSession {
 | Usage field has unknown shape | Ignore unknown fields; keep the message/session readable. |
 | Session has no token trend points | Return an empty `token_trend`; UI renders an explicit empty state. |
 | Session has exactly one token trend point | Keep the single point; UI renders a single-point state instead of a misleading line chart. |
-| CLI hook session id lookup misses | Fall back to project latest-session lookup; do not blank the realtime stats panel. |
+| CLI hook session id present but not yet in history | Keep the terminal's own loading/empty state; never show another session. |
+| No session id, but a hook already bound a CLI session this run | Show an explicit awaiting-identification empty state for the CLI terminal; do not borrow project latest. |
+| No session id and no hook ever bound (no-hook environment) | Fall back to project latest-session lookup; do not blank the realtime stats panel. |
 | Model pricing not found | Add all usage tokens to `unpriced_tokens`; do not estimate cost. |
 | Explicit cost is present | Use explicit cost and do not add those tokens to `unpriced_tokens`. |
 | Date range exceeds 366 days | Return `date_range_too_large`. |
@@ -174,4 +177,4 @@ Project latest-session lookup can return another Codex window from the same proj
 await fetchLatestProjectSessionDetail(projectPath, previous, "codex", terminalSession.cliSessionId);
 ```
 
-Use the hook-provided CLI session id first, then fall back to project latest-session lookup only when precise lookup is unavailable.
+Use the hook-provided CLI session id first. Project latest-session lookup is only a fallback when no session id exists at all; with an id present, a lookup miss keeps the terminal's own empty state rather than borrowing another session.

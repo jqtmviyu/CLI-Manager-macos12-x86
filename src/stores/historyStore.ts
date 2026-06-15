@@ -523,7 +523,12 @@ export async function fetchLatestProjectSessionDetail(
       return (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
     };
     const sessionQuery = cliSessionId?.trim() || null;
-    const summary = (sessionQuery ? await loadSummary(sessionQuery) : null) ?? await loadSummary(null);
+    // 有 CLI 会话 ID 时严格按该会话查找；命中不到也不回退到项目最近会话，
+    // 否则同项目多个终端会互相串显另一个窗口的会话数据。
+    // 仅在完全没有 CLI 会话 ID（无 hook 环境）时才回退项目最近会话。
+    const summary = sessionQuery
+      ? await loadSummary(sessionQuery)
+      : await loadSummary(null);
     if (!summary) return null;
     if (prev && summary.file_path === prev.filePath && summary.updated_at === prev.updatedAt) {
       return "unchanged";

@@ -151,12 +151,22 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
     [terminalSession?.startupCmd, terminalSession?.title, project?.cli_tool]
   );
 
+  // 任一终端已绑定过 CLI 会话 ID，说明 hook 链路可用。此时若本 CLI 终端仍未拿到
+  // 自己的 cliSessionId，视为「会话尚未识别」，显示等待空态而非回退项目最近会话，
+  // 避免新开/未发首条指令的终端串显同项目另一个窗口的数据。
+  const anyCliBound = useMemo(
+    () => terminalSessions.some((session) => Boolean(session.cliSessionId)),
+    [terminalSessions]
+  );
+  const awaitingSessionId = Boolean(sourceFilter) && anyCliBound && !terminalSession?.cliSessionId;
+
   // 轮询该项目最近一次 CLI 会话：updated_at 未变化时跳过 jsonl 重解析
   useEffect(() => {
-    if (!open || !projectPath) {
+    if (!open || !projectPath || awaitingSessionId) {
       lastPathRef.current = null;
       latestRef.current = null;
       setLatestSession(null);
+      if (awaitingSessionId) setUpdatedAt(null);
       return;
     }
     // 切换 Tab（项目路径或 CLI 来源变化）时立即清空旧数据，避免短暂展示错误的模型/上下文
@@ -198,7 +208,7 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
     };
     // activeSessionId 入依赖：切换 Tab 时立即重新核对最近会话（unchanged 时开销仅一次列表查询）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, projectPath, sourceFilter, terminalSession?.cliSessionId, refreshSeq, activeSessionId]);
+  }, [open, projectPath, sourceFilter, terminalSession?.cliSessionId, refreshSeq, activeSessionId, awaitingSessionId]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
   useEffect(() => {
@@ -267,6 +277,8 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
 
       {!projectPath ? (
         <EmptyHint text="当前终端未关联项目" />
+      ) : awaitingSessionId ? (
+        <EmptyHint text={`等待 ${sourceFilter} 会话识别（发送一次指令后显示）`} />
       ) : loadingSession && !latestSession ? (
         <EmptyHint text="加载中…" />
       ) : !latestSession ? (
