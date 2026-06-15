@@ -125,6 +125,7 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
   const [todayStats, setTodayStats] = useState<TodayProjectStats | null>(null);
   const [loadingToday, setLoadingToday] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [, setNowTick] = useState(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const latestRef = useRef<HistorySessionDetail | null>(null);
   const lastPathRef = useRef<string | null>(null);
@@ -216,6 +217,15 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
       cancelled = true;
     };
   }, [open, latestSession, sourceFilter]);
+
+  // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
+  useEffect(() => {
+    if (!open || updatedAt === null) return;
+    const timer = window.setInterval(() => {
+      setNowTick((prev) => prev + 1);
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [open, updatedAt]);
 
   const stats = useMemo(() => calculateTokenStats(latestSession), [latestSession]);
 
