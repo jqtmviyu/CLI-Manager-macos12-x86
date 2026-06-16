@@ -229,11 +229,8 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
           "ccswitch_list_common_configs",
           { dbPath: ccSwitchDbPath ?? undefined }
         );
-        console.log("🔍 [通用配置调试] 加载到的配置数量:", response.commonConfigs.length);
-        console.log("🔍 [通用配置调试] 配置详情:", response.commonConfigs);
         setCommonConfigs(response.commonConfigs);
-      } catch (err) {
-        console.error("🔍 [通用配置调试] 加载失败:", err);
+      } catch {
         setCommonConfigs([]);
       } finally {
         setCommonConfigsLoaded(true);

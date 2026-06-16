@@ -31,6 +31,30 @@
 - TypeScript 类型检查通过，所有 hooks 依赖数组正确，边界情况处理完善
 - 代码规范审查通过，无未使用导入、无 console.log 残留
 
+### 设置 - 供应商配置展示增强
+
+#### 多 app_type 配置解析
+
+- **Codex / 多供应商类型解析支持**：供应商配置解析从硬编码 `ANTHROPIC_*` 改用通配符匹配（`*_BASE_URL` / `*_API_BASE` / `*_ENDPOINT` 识别 BASE_URL，`*_MODEL` 识别模型），自动支持 `OPENAI_*`（Codex）、`GOOGLE_*`（Gemini）、`DEEPSEEK_*` 等任意前缀，解决 Codex 等非 Claude 供应商 BASE_URL 与模型显示空白的问题。
+
+#### 通用配置读取与合并
+
+- **读取 cc-switch 通用配置**：新增 `ccswitch_list_common_configs` 命令，从 cc-switch `settings` 表读取 `common_config_{app_type}`（如 `common_config_claude` / `common_config_codex` / `common_config_gemini` 等）通用配置；表不存在时优雅降级返回空列表。
+- **供应商详情完整配置展示**：详情面板新增配置 Tabs，按"完整配置 → 供应商配置 → 通用配置"顺序展示，默认显示完整配置：
+  - **完整配置**：通用配置打底 + 供应商配置深度合并（供应商优先覆盖），即该供应商实际生效的完整配置。
+  - **供应商配置**：供应商自身的原始 `settings_config`。
+  - **通用配置**：当前 app_type 对应的 `common_config_{app_type}`，仅当匹配到时显示该 Tab。
+
+#### JSON 代码块美化
+
+- **语法高亮代码块**：新增 `JsonCodeBlock` 组件，配置 JSON 以深色背景（`#1e1e1e`，类 VSCode Dark）+ 语法高亮（键名蓝 / 字符串橙 / 数字绿 / 布尔与 null 浅蓝）+ 圆角边框展示；纯 CSS 实现无第三方依赖，渲染前对 HTML 转义防注入。
+- 每个 Tab 提供独立复制按钮，可一键复制对应配置 JSON。
+
+#### 代码质量
+
+- 后端 `parse_settings_config` 改用后缀通配，保留 Claude 供应商兼容；新增 `deepMerge` 前端深度合并工具。
+- Rust `cargo check` 与全部测试通过，TypeScript 类型检查通过。
+
 ### 终端 - 跨平台默认 Shell 识别
 
 #### 核心改进
