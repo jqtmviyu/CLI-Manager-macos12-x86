@@ -853,6 +853,27 @@ export function XTermTerminal({ sessionId, isActive = true, fontSize = 14, fontF
         }
         const boxBottom = Math.max(row, ruleRow - 1);
 
+        // The TUI (Claude Code / Codex) paints its own text caret as a single
+        // reverse-video cell (CSI 7m) inside the box — verified via buffer dump:
+        // it tracks the real caret on the prompt row, on continuation rows, and
+        // even mid-box, while the hardware cursor gets parked far-right or below
+        // the box. Plain shells never set this attribute (xterm draws their
+        // cursor as a render overlay, not a buffer cell attribute), so this scan
+        // only ever fires for a TUI — and when it does, it IS the visual caret.
+        for (let r = row; r <= boxBottom; r += 1) {
+          const line = buffer.getLine(buffer.viewportY + r);
+          if (!line) continue;
+          const width = Math.min(terminal.cols, line.length);
+          for (let x = 0; x < width; x += 1) {
+            const cell = line.getCell(x);
+            if (cell && cell.isInverse() !== 0) {
+              return { x: clampX(x), y: clampY(r) };
+            }
+          }
+        }
+
+        // No app-drawn caret (plain shell, or a mid-frame redraw dropped it):
+        // fall back to purely structural anchoring.
         // Last non-blank row inside the box.
         let lastContentRow = row;
         for (let r = row + 1; r <= boxBottom; r += 1) {
