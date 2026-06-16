@@ -24,6 +24,7 @@ import {
   type DarkThemePalette,
   type LightThemePalette,
   type SidebarDensity,
+  type SidebarToolbarVisibilitySettings,
   type TerminalToolbarVisibilitySettings,
   type ThemeMode,
 } from "../../../stores/settingsStore";
@@ -417,6 +418,7 @@ export function GeneralSettingsPage() {
   const debugMode = useSettingsStore((s) => s.debugMode);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
+  const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
   const showProjectTreeBadges = useSettingsStore((s) => s.showProjectTreeBadges);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
@@ -478,6 +480,10 @@ export function GeneralSettingsPage() {
   );
   const updateToolbarVisibility = (key: keyof TerminalToolbarVisibilitySettings, checked: boolean) => {
     void update("terminalToolbarVisibility", { ...terminalToolbarVisibility, [key]: checked });
+  };
+
+  const updateSidebarToolbarVisibility = (key: keyof SidebarToolbarVisibilitySettings, checked: boolean) => {
+    void update("sidebarToolbarVisibility", { ...sidebarToolbarVisibility, [key]: checked });
   };
 
   return (
@@ -792,11 +798,16 @@ export function GeneralSettingsPage() {
         </Card>
       </section>
 
+
       <section>
         <Card className="ui-surface-card" p="md">
           <Stack gap="sm">
             <Text size="sm" fw={600} c="var(--on-surface)">
               工具栏
+            </Text>
+
+            <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="xs">
+              终端工具栏
             </Text>
             <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
               {TERMINAL_TOOLBAR_OPTIONS.map((option) => (
@@ -822,7 +833,7 @@ export function GeneralSettingsPage() {
                     显示工具栏文字
                   </Text>
                   <Text mt={4} size="xs" c="var(--text-muted)">
-                    关闭后除“新建”外只显示图标。
+                    关闭后除"新建"外只显示图标。
                   </Text>
                 </Box>
                 <Switch
@@ -830,6 +841,28 @@ export function GeneralSettingsPage() {
                   checked={terminalToolbarVisibility.showText}
                   onChange={(event) => updateToolbarVisibility("showText", event.currentTarget.checked)}
                   aria-label={terminalToolbarVisibility.showText ? "隐藏工具栏文字" : "显示工具栏文字"}
+                />
+              </Group>
+            </Card>
+
+            <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="md">
+              侧边栏工具栏
+            </Text>
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    显示用量分析按钮
+                  </Text>
+                  <Text mt={4} size="xs" c="var(--text-muted)">
+                    在侧边栏底部显示历史用量统计按钮
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={sidebarToolbarVisibility.stats}
+                  onChange={(event) => updateSidebarToolbarVisibility("stats", event.currentTarget.checked)}
+                  aria-label={sidebarToolbarVisibility.stats ? "隐藏用量分析按钮" : "显示用量分析按钮"}
                 />
               </Group>
             </Card>

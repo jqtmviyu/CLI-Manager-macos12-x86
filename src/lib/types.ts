@@ -321,4 +321,21 @@ export const SHELL_OPTIONS = [
   { value: "wsl", label: "WSL" },
   { value: "gitbash", label: "Git Bash" },
   { value: "bash", label: "Bash" },
-] as const;
+];
+
+// Git 相关类型
+export interface GitFileChange {
+  path: string;
+  status: "M" | "A" | "D" | "R" | "U" | "??";
+  staged: boolean;
+  added: number;
+  deleted: number;
+}
+
+export interface GitTreeNode {
+  type: "file" | "directory";
+  name: string;
+  path: string;
+  children?: GitTreeNode[];
+  change?: GitFileChange;
+}

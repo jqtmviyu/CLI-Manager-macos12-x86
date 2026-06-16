@@ -1,15 +1,17 @@
 import { BarChart3, Settings } from "../icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../SettingsModal";
+import type { SidebarToolbarVisibilitySettings } from "../../stores/settingsStore";
 
 interface SidebarFooterProps {
   collapsed: boolean;
   onOpenSettings: (tab?: SettingsTab) => void;
   onOpenStats: () => void;
+  toolbarVisibility: SidebarToolbarVisibilitySettings;
 }
 
-export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats }: SidebarFooterProps) {
-  const statsButton = (
+export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarVisibility }: SidebarFooterProps) {
+  const statsButton = toolbarVisibility.stats ? (
     <button
       onClick={onOpenStats}
       className="ui-focus-ring ui-icon-action"
@@ -18,7 +20,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats }: Sideba
     >
       <BarChart3 size={14} strokeWidth={1.5} />
     </button>
-  );
+  ) : null;
 
   const settingsButton = (
     <button

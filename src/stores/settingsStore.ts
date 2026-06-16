@@ -66,6 +66,11 @@ export interface TerminalToolbarVisibilitySettings {
   showText: boolean;
 }
 
+export interface SidebarToolbarVisibilitySettings {
+  stats: boolean;
+  gitChanges: boolean;
+}
+
 export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   newTerminal: "Ctrl+Shift+T",
   closeTerminal: "Ctrl+W",
@@ -144,6 +149,7 @@ interface Settings {
   terminalNewlineShortcut: TerminalNewlineShortcut;
   unsplitBehavior: UnsplitBehavior;
   terminalToolbarVisibility: TerminalToolbarVisibilitySettings;
+  sidebarToolbarVisibility: SidebarToolbarVisibilitySettings;
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   terminalBackground: TerminalBackgroundSettings;
@@ -201,6 +207,10 @@ const DEFAULTS: Settings = {
     fullscreen: true,
     sessionHistory: true,
     showText: false,
+  },
+  sidebarToolbarVisibility: {
+    stats: true,
+    gitChanges: true,
   },
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
@@ -294,6 +304,19 @@ export function migrateTerminalToolbarVisibility(value: unknown): TerminalToolba
     fullscreen: typeof raw.fullscreen === "boolean" ? raw.fullscreen : defaults.fullscreen,
     sessionHistory: typeof raw.sessionHistory === "boolean" ? raw.sessionHistory : defaults.sessionHistory,
     showText: typeof raw.showText === "boolean" ? raw.showText : defaults.showText,
+  };
+}
+
+export function migrateSidebarToolbarVisibility(value: unknown): SidebarToolbarVisibilitySettings {
+  const defaults = DEFAULTS.sidebarToolbarVisibility;
+  if (typeof value !== "object" || value === null) {
+    return { ...defaults };
+  }
+  const raw = value as Record<string, unknown>;
+
+  return {
+    stats: typeof raw.stats === "boolean" ? raw.stats : defaults.stats,
+    gitChanges: typeof raw.gitChanges === "boolean" ? raw.gitChanges : defaults.gitChanges,
   };
 }
 
@@ -434,6 +457,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       : DEFAULTS.collapsedGroupIds;
 
     entries.terminalToolbarVisibility = migrateTerminalToolbarVisibility(entries.terminalToolbarVisibility);
+    entries.sidebarToolbarVisibility = migrateSidebarToolbarVisibility(entries.sidebarToolbarVisibility);
     entries.unsplitBehavior = migrateUnsplitBehavior(entries.unsplitBehavior);
     entries.showProjectTreeBadges =
       typeof entries.showProjectTreeBadges === "boolean"

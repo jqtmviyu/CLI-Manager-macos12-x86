@@ -111,6 +111,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   const sessionStatuses = useTerminalStore((s) => s.sessionStatuses);
   const useExternalTerminal = useSettingsStore((s) => s.useExternalTerminal);
   const sidebarDensity = useSettingsStore((s) => s.sidebarDensity);
+  const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
   const updateSetting = useSettingsStore((s) => s.update);
   const persistedSidebarWidth = useSettingsStore((s) => s.sidebarWidth);
 
@@ -838,6 +839,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
           collapsed={compactMode ? false : sidebarCollapsed}
           onOpenSettings={onOpenSettings}
           onOpenStats={onOpenStats}
+          toolbarVisibility={sidebarToolbarVisibility}
         />
       </div>
 

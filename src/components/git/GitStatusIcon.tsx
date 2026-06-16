@@ -14,6 +14,7 @@ const STATUS_CONFIG: Record<
   D: { label: "Deleted", color: "#f7768e", symbol: "D" },
   R: { label: "Renamed", color: "#7aa2f7", symbol: "R" },
   U: { label: "Untracked", color: "#9aa5ce", symbol: "U" },
+  "??": { label: "Untracked", color: "#9aa5ce", symbol: "?" },
 };
 
 export function GitStatusIcon({ status, size = 14 }: GitStatusIconProps) {

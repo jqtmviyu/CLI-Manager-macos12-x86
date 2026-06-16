@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { GitFileChange, GitTreeNode } from "../lib/types";
 
+type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
+
 interface GitStore {
   changes: GitFileChange[];
   tree: GitTreeNode[];
@@ -9,9 +11,11 @@ interface GitStore {
   loading: boolean;
   error: string | null;
   currentProjectPath: string | null;
+  statusFilter: GitStatusFilter;
 
   fetchChanges: (projectPath: string) => Promise<void>;
   toggleDir: (path: string) => void;
+  setStatusFilter: (filter: GitStatusFilter) => void;
   reset: () => void;
 }
 
@@ -60,13 +64,14 @@ function buildTree(changes: GitFileChange[]): GitTreeNode[] {
   return root;
 }
 
-export const useGitStore = create<GitStore>((set) => ({
+export const useGitStore = create<GitStore>((set, get) => ({
   changes: [],
   tree: [],
   collapsedDirs: new Set(),
   loading: false,
   error: null,
   currentProjectPath: null,
+  statusFilter: "all",
 
   fetchChanges: async (projectPath: string) => {
     console.log(`[GitStore] 开始获取 Git 变更, projectPath: "${projectPath}"`);
@@ -76,7 +81,14 @@ export const useGitStore = create<GitStore>((set) => ({
       console.log(`[GitStore] 调用后端命令 git_get_changes`);
       const changes = await invoke<GitFileChange[]>("git_get_changes", { projectPath });
       console.log(`[GitStore] 获取到 ${changes.length} 个变更文件`);
-      const tree = buildTree(changes);
+
+      // 应用筛选
+      const { statusFilter } = get();
+      const filtered = statusFilter === "all"
+        ? changes
+        : changes.filter(c => c.status === statusFilter || (statusFilter === "U" && c.status === "??"));
+
+      const tree = buildTree(filtered);
       console.log(`[GitStore] 构建树结构完成，根节点数: ${tree.length}`);
       set({ changes, tree, loading: false });
     } catch (err) {
@@ -98,6 +110,16 @@ export const useGitStore = create<GitStore>((set) => ({
     });
   },
 
+  setStatusFilter: (filter: GitStatusFilter) => {
+    set((state) => {
+      const filtered = filter === "all"
+        ? state.changes
+        : state.changes.filter(c => c.status === filter || (filter === "U" && c.status === "??"));
+      const tree = buildTree(filtered);
+      return { statusFilter: filter, tree };
+    });
+  },
+
   reset: () => {
     set({
       changes: [],
@@ -106,6 +128,7 @@ export const useGitStore = create<GitStore>((set) => ({
       loading: false,
       error: null,
       currentProjectPath: null,
+      statusFilter: "all",
     });
   },
 }));
