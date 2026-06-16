@@ -19,3 +19,24 @@ pub fn get_app_version(app: tauri::AppHandle) -> AppVersion {
             .unwrap_or_else(|| "CLI-Manager".to_string()),
     }
 }
+
+/// 获取当前操作系统平台（"windows" / "macos" / "linux" / "unknown"）
+#[tauri::command]
+pub fn get_os_platform() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        "windows".to_string()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "macos".to_string()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "linux".to_string()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        "unknown".to_string()
+    }
+}

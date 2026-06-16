@@ -58,14 +58,36 @@ impl PtyManager {
 
     fn resolve_shell(shell: &str) -> Result<(String, Vec<String>), String> {
         match shell {
+            // Windows shells
             "cmd" => Ok(("cmd.exe".to_string(), vec!["/Q".to_string()])),
             "pwsh" => Ok(("pwsh.exe".to_string(), vec!["-NoLogo".to_string()])),
             "wsl" => Ok(("wsl.exe".to_string(), Vec::new())),
             "gitbash" => resolve_git_bash_exe()
                 .map(|path| (path.to_string_lossy().into_owned(), Vec::new()))
                 .ok_or_else(|| GIT_BASH_NOT_FOUND_MESSAGE.to_string()),
-            "bash" => Ok(("bash.exe".to_string(), Vec::new())),
-            _ => Ok(("powershell.exe".to_string(), vec!["-NoLogo".to_string()])),
+            // Unix shells (macOS, Linux)
+            "zsh" => Ok(("zsh".to_string(), Vec::new())),
+            "fish" => Ok(("fish".to_string(), Vec::new())),
+            "sh" => Ok(("sh".to_string(), Vec::new())),
+            "bash" => {
+                // Windows: bash.exe（WSL/Git 自带）；Unix: bash
+                if cfg!(target_os = "windows") {
+                    Ok(("bash.exe".to_string(), Vec::new()))
+                } else {
+                    Ok(("bash".to_string(), Vec::new()))
+                }
+            }
+            // 默认：Windows 用 powershell；Unix 用用户的登录 shell（$SHELL），
+            // 回退到平台惯用默认（macOS=zsh，其它=bash）
+            _ => {
+                if cfg!(target_os = "windows") {
+                    Ok(("powershell.exe".to_string(), vec!["-NoLogo".to_string()]))
+                } else {
+                    let fallback = if cfg!(target_os = "macos") { "zsh" } else { "bash" };
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| fallback.to_string());
+                    Ok((shell, Vec::new()))
+                }
+            }
         }
     }
 

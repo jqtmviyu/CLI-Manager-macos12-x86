@@ -24,8 +24,9 @@ import {
   getTerminalTheme,
   resolveAutoTerminalThemeId,
 } from "../../../lib/terminalThemes";
-import { normalizeShellKey } from "../../../lib/shell";
-import { SHELL_OPTIONS } from "../../../lib/types";
+import { normalizeShellKey, getOsPlatform } from "../../../lib/shell";
+import type { OsPlatform } from "../../../lib/shell";
+import { getShellOptions } from "../../../lib/types";
 import {
   TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   TERMINAL_SCROLLBACK_ROWS_MAX,
@@ -80,6 +81,11 @@ export function ThemeSettingsPage() {
   const [query, setQuery] = useState("");
   const [fontSizeDraft, setFontSizeDraft] = useState(fontSize);
   const [terminalScrollbackRowsDraft, setTerminalScrollbackRowsDraft] = useState(terminalScrollbackRows);
+  const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
+
+  useEffect(() => {
+    void getOsPlatform().then(setOsPlatform);
+  }, []);
 
   useEffect(() => {
     setFontSizeDraft(fontSize);
@@ -141,9 +147,9 @@ export function ThemeSettingsPage() {
   const shellOptions = useMemo(
     () => [
       ...(isCustomShellValue ? [{ value: defaultShell, label: "当前自定义（保留）" }] : []),
-      ...SHELL_OPTIONS,
+      ...getShellOptions(osPlatform),
     ],
-    [defaultShell, isCustomShellValue]
+    [defaultShell, isCustomShellValue, osPlatform]
   );
   const commitFontSize = (value = fontSizeDraft) => {
     const next = clampFontSize(value);

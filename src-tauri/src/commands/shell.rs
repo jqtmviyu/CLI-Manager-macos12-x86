@@ -15,13 +15,19 @@ pub struct ExternalTab {
 
 fn shell_exe(shell: &str) -> Result<(String, Option<&'static str>), String> {
     match shell {
+        // Windows shells
         "cmd" => Ok(("cmd".to_string(), Some("/K"))),
         "pwsh" => Ok(("pwsh".to_string(), Some("-NoExit"))),
         "wsl" => Ok(("wsl".to_string(), None)),
         "gitbash" => resolve_git_bash_exe()
             .map(|path| (path.to_string_lossy().into_owned(), None))
             .ok_or_else(|| GIT_BASH_NOT_FOUND_MESSAGE.to_string()),
+        // Unix shells (these won't be invoked on Windows Terminal, but safe to define)
+        "zsh" => Ok(("zsh".to_string(), None)),
+        "fish" => Ok(("fish".to_string(), None)),
+        "sh" => Ok(("sh".to_string(), None)),
         "bash" => Ok(("bash".to_string(), None)),
+        // Default: powershell on Windows
         _ => Ok(("powershell".to_string(), Some("-NoExit"))),
     }
 }

@@ -16,7 +16,7 @@ import {
   type DragOverEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { SortableContext, arrayMove, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
@@ -30,7 +30,7 @@ import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
-import { Terminal, Plus, Search, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, FileText } from "./icons";
+import { Terminal, Plus, ListClockIcon, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, FileText } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
 import { useHistoryStore } from "../stores/historyStore";
 import type { HistorySourceFilter, Project, TerminalSession } from "../lib/types";
@@ -994,6 +994,30 @@ function SplitProjectPicker({ picker, projects, onSelectEmpty, onSelectProject, 
   );
 }
 
+function SortableToolbarButton({
+  id,
+  isDragging,
+  children,
+}: {
+  id: string;
+  isDragging: boolean;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    cursor: "grab",
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="flex h-full items-center" {...attributes} {...listeners}>
+      {children}
+    </div>
+  );
+}
+
 interface TerminalTabsProps {
   fullscreen?: boolean;
   onToggleFullscreen?: () => void;
@@ -1033,6 +1057,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const terminalBackgroundEnabled = useSettingsStore((s) => s.terminalBackground.enabled);
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
+  const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
+  const updateSettings = useSettingsStore((s) => s.update);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
   const historyOpen = useHistoryStore((s) => s.isOpen);
@@ -1046,10 +1072,12 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [statsPanelOpen, setStatsPanelOpen] = useState(false);
   const [gitChangesPanelOpen, setGitChangesPanelOpen] = useState(false);
+  const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
   const splitPickerOpenFrameRef = useRef<number | null>(null);
   const splitPickerOpenTimerRef = useRef<number | null>(null);
   const splitPickerOutsideGuardUntilRef = useRef(0);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const allPanes = useMemo(() => collectPaneLeaves(paneTree), [paneTree]);
   const activeDragSession = useMemo(
@@ -1288,21 +1316,46 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActiveWorkspaceTab("terminal");
   }, [canSplitSessionToPaneEdge, clearDragState, findPaneForSession, moveSessionToPane, reorderSessions, splitSessionToPaneEdge]);
 
-  const renderToolbarActions = useCallback(() => (
-    <div className="ui-terminal-actions flex h-full shrink-0 items-center gap-2 px-2.5">
-      <button
-        onClick={handleNewTab}
-        className="ui-flat-action ui-toolbar-button ui-primary-action"
-        title="新建终端"
-        aria-label="新建终端"
-      >
-        <Plus size={12} strokeWidth={2} />
-        <Terminal size={14} strokeWidth={1.5} />
-        <span>新建</span>
-      </button>
-      {terminalToolbarVisibility.templates && <CommandTemplatePanel showText={showToolbarText} />}
-      {terminalToolbarVisibility.commandHistory && <CommandHistoryPanel compact showText={showToolbarText} />}
-      {terminalToolbarVisibility.fullscreen && onToggleFullscreen && (
+  const handleToolbarDragStart = useCallback((event: DragStartEvent) => {
+    setActiveToolbarDragId(String(event.active.id));
+  }, []);
+
+  const handleToolbarDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    setActiveToolbarDragId(null);
+
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = terminalToolbarOrder.indexOf(String(active.id));
+    const newIndex = terminalToolbarOrder.indexOf(String(over.id));
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      const newOrder = arrayMove(terminalToolbarOrder, oldIndex, newIndex);
+      void updateSettings("terminalToolbarOrder", newOrder);
+    }
+  }, [terminalToolbarOrder, updateSettings]);
+
+  const handleToolbarDragCancel = useCallback(() => {
+    setActiveToolbarDragId(null);
+  }, []);
+
+  const renderToolbarActions = useCallback(() => {
+    const buttonMap: Record<string, ReactNode> = {
+      new: (
+        <button
+          onClick={handleNewTab}
+          className="ui-flat-action ui-toolbar-button ui-primary-action"
+          title="新建终端"
+          aria-label="新建终端"
+        >
+          <Plus size={12} strokeWidth={2} />
+          <Terminal size={14} strokeWidth={1.5} />
+          <span>新建</span>
+        </button>
+      ),
+      templates: <CommandTemplatePanel showText={showToolbarText} />,
+      commandHistory: <CommandHistoryPanel compact showText={showToolbarText} />,
+      fullscreen: onToggleFullscreen ? (
         <button
           onClick={onToggleFullscreen}
           className={showToolbarText ? "ui-flat-action ui-toolbar-button" : "ui-focus-ring ui-icon-action"}
@@ -1314,8 +1367,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           {fullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
           {showToolbarText && <span>{fullscreen ? "退出全屏" : "全屏"}</span>}
         </button>
-      )}
-      {terminalToolbarVisibility.sessionHistory && (
+      ) : null,
+      sessionHistory: (
         <button
           onClick={handleOpenHistoryTab}
           className={
@@ -1329,55 +1382,101 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           aria-controls="history-workspace"
           aria-expanded={historyOpen}
         >
-          <Search size={13} strokeWidth={1.8} />
+          <ListClockIcon size={20} />
           {showToolbarText && <span>会话历史</span>}
         </button>
-      )}
-      <button
-        onClick={handleToggleGitChangesPanel}
-        className={
-          showToolbarText
-            ? `ui-flat-action ui-toolbar-button ${gitChangesPanelOpen ? "ui-primary-action" : ""}`
-            : "ui-focus-ring ui-icon-action"
-        }
-        data-active={gitChangesPanelOpen ? "true" : "false"}
-        title={gitChangesPanelOpen ? "关闭 Git 变更" : "打开 Git 变更"}
-        aria-label={gitChangesPanelOpen ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
-        aria-pressed={gitChangesPanelOpen}
+      ),
+      gitChanges: (
+        <button
+          onClick={handleToggleGitChangesPanel}
+          className={
+            showToolbarText
+              ? `ui-flat-action ui-toolbar-button ${gitChangesPanelOpen ? "ui-primary-action" : ""}`
+              : "ui-focus-ring ui-icon-action"
+          }
+          data-active={gitChangesPanelOpen ? "true" : "false"}
+          title={gitChangesPanelOpen ? "关闭 Git 变更" : "打开 Git 变更"}
+          aria-label={gitChangesPanelOpen ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
+          aria-pressed={gitChangesPanelOpen}
+        >
+          <FileText size={13} strokeWidth={1.8} />
+          {showToolbarText && <span>Git 变更</span>}
+        </button>
+      ),
+      stats: (
+        <button
+          onClick={handleToggleStatsPanel}
+          className={
+            showToolbarText
+              ? `ui-flat-action ui-toolbar-button ${statsPanelOpen ? "ui-primary-action" : ""}`
+              : "ui-focus-ring ui-icon-action"
+          }
+          data-active={statsPanelOpen ? "true" : "false"}
+          title={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
+          aria-label={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
+          aria-pressed={statsPanelOpen}
+        >
+          <BarChart3 size={13} strokeWidth={1.8} />
+          {showToolbarText && <span>统计</span>}
+        </button>
+      ),
+    };
+
+    const visibleButtons = terminalToolbarOrder
+      .filter((key) => {
+        if (key === "new") return true;
+        if (key === "gitChanges") return true;
+        if (key === "fullscreen" && !onToggleFullscreen) return false;
+        return terminalToolbarVisibility[key as keyof typeof terminalToolbarVisibility] === true;
+      })
+      .map((key) => ({ id: key, element: buttonMap[key] }))
+      .filter((btn) => btn.element !== null);
+
+    return (
+      <DndContext
+        sensors={toolbarSensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleToolbarDragStart}
+        onDragEnd={handleToolbarDragEnd}
+        onDragCancel={handleToolbarDragCancel}
       >
-        <FileText size={13} strokeWidth={1.8} />
-        {showToolbarText && <span>Git 变更</span>}
-      </button>
-      <button
-        onClick={handleToggleStatsPanel}
-        className={
-          showToolbarText
-            ? `ui-flat-action ui-toolbar-button ${statsPanelOpen ? "ui-primary-action" : ""}`
-            : "ui-focus-ring ui-icon-action"
-        }
-        data-active={statsPanelOpen ? "true" : "false"}
-        title={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
-        aria-label={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
-        aria-pressed={statsPanelOpen}
-      >
-        <BarChart3 size={13} strokeWidth={1.8} />
-        {showToolbarText && <span>统计</span>}
-      </button>
-    </div>
-  ), [
+        <div className="ui-terminal-actions flex h-full shrink-0 items-center gap-2 px-2.5">
+          <SortableContext items={visibleButtons.map((b) => b.id)} strategy={horizontalListSortingStrategy}>
+            {visibleButtons.map((btn) => (
+              <SortableToolbarButton key={btn.id} id={btn.id} isDragging={activeToolbarDragId === btn.id}>
+                {btn.element}
+              </SortableToolbarButton>
+            ))}
+          </SortableContext>
+        </div>
+        <DragOverlay dropAnimation={null}>
+          {activeToolbarDragId && buttonMap[activeToolbarDragId] ? (
+            <div className="cursor-grabbing" style={{ opacity: 1 }}>
+              {buttonMap[activeToolbarDragId]}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    );
+  }, [
+    activeToolbarDragId,
     fullscreen,
+    gitChangesPanelOpen,
     handleNewTab,
     handleOpenHistoryTab,
+    handleToggleGitChangesPanel,
     handleToggleStatsPanel,
+    handleToolbarDragCancel,
+    handleToolbarDragEnd,
+    handleToolbarDragStart,
     historyOpen,
     onToggleFullscreen,
-    sessionHistoryShortcut,
+    sessionHistoryShortcutHint,
     showToolbarText,
     statsPanelOpen,
-    terminalToolbarVisibility.commandHistory,
-    terminalToolbarVisibility.fullscreen,
-    terminalToolbarVisibility.sessionHistory,
-    terminalToolbarVisibility.templates,
+    terminalToolbarOrder,
+    terminalToolbarVisibility,
+    toolbarSensors,
   ]);
 
   const renderLeaf = useCallback((pane: TerminalPaneLeaf) => (

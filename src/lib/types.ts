@@ -314,14 +314,40 @@ export interface HistoryStatsPayload {
   hourly_activity: HistoryStatsHourlyActivityItem[];
 }
 
-export const SHELL_OPTIONS = [
+export const SHELL_OPTIONS_WINDOWS = [
   { value: "powershell", label: "PowerShell" },
   { value: "cmd", label: "CMD" },
   { value: "pwsh", label: "PowerShell Core" },
   { value: "wsl", label: "WSL" },
   { value: "gitbash", label: "Git Bash" },
   { value: "bash", label: "Bash" },
-];
+] as const;
+
+export const SHELL_OPTIONS_MACOS = [
+  { value: "zsh", label: "Zsh" },
+  { value: "bash", label: "Bash" },
+  { value: "fish", label: "Fish" },
+  { value: "sh", label: "Sh" },
+] as const;
+
+export const SHELL_OPTIONS_LINUX = [
+  { value: "bash", label: "Bash" },
+  { value: "zsh", label: "Zsh" },
+  { value: "fish", label: "Fish" },
+  { value: "sh", label: "Sh" },
+] as const;
+
+export type ShellOption = { value: string; label: string };
+
+/** 根据操作系统返回可选的 Shell 列表 */
+export function getShellOptions(os: "windows" | "macos" | "linux" | "unknown"): readonly ShellOption[] {
+  if (os === "macos") return SHELL_OPTIONS_MACOS;
+  if (os === "linux") return SHELL_OPTIONS_LINUX;
+  return SHELL_OPTIONS_WINDOWS;
+}
+
+/** @deprecated 使用 getShellOptions(os) 以支持跨平台 */
+export const SHELL_OPTIONS = SHELL_OPTIONS_WINDOWS;
 
 // Git 相关类型
 export interface GitFileChange {

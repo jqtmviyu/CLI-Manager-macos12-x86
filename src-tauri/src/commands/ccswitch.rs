@@ -27,6 +27,8 @@ pub struct CcSwitchProvider {
     api_format: Option<String>,
     masked_env: BTreeMap<String, String>,
     config_parse_error: bool,
+    /// Raw settings_config JSON text (for display only, not for actual application)
+    raw_settings_config: String,
 }
 
 #[derive(Serialize)]
@@ -75,11 +77,16 @@ fn parse_settings_config(raw: &str) -> Option<ParsedConfig> {
     if let Some(env) = value.get("env").and_then(Value::as_object) {
         for (key, raw_value) in env {
             let text = env_value_text(raw_value);
-            if key == "ANTHROPIC_BASE_URL" {
+
+            // Generic pattern matching: *_BASE_URL / *_API_BASE / *_ENDPOINT
+            if key.ends_with("_BASE_URL") || key.ends_with("_API_BASE") || key.ends_with("_ENDPOINT") {
                 parsed.base_url = Some(text.clone());
-            } else if key == "ANTHROPIC_MODEL" {
+            }
+            // Generic pattern matching: *_MODEL
+            else if key.ends_with("_MODEL") {
                 parsed.model = Some(text.clone());
             }
+
             let display = if is_secret_env_key(key) {
                 mask_secret(&text)
             } else {
@@ -158,6 +165,7 @@ fn provider_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<CcSwitchProvider, 
         api_format: parse_api_format(&meta),
         masked_env: parsed.masked_env,
         config_parse_error,
+        raw_settings_config: settings_config,
     })
 }
 
@@ -542,6 +550,82 @@ pub async fn ccswitch_probe_projects(
         .collect();
 
     Ok(badges)
+}
+
+// ---------- Phase 4: Common Config (from settings table) ----------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcSwitchCommonConfig {
+    app_type: String,
+    config_json: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcSwitchCommonConfigResponse {
+    db_path: String,
+    common_configs: Vec<CcSwitchCommonConfig>,
+}
+
+#[tauri::command]
+pub async fn ccswitch_list_common_configs(
+    app: tauri::AppHandle,
+    db_path: Option<String>,
+) -> Result<CcSwitchCommonConfigResponse, String> {
+    let path = resolve_db_path(&app, db_path)?;
+    let mut conn = open_db_readonly(&path).await?;
+
+    // Error tolerance: check if settings table exists
+    let table_exists = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='settings'"
+    )
+    .fetch_optional(&mut conn)
+    .await
+    .map_err(|err| format!("db_query_failed: {err}"))?
+    .is_some();
+
+    if !table_exists {
+        let _ = conn.close().await;
+        return Ok(CcSwitchCommonConfigResponse {
+            db_path: path.to_string_lossy().into_owned(),
+            common_configs: Vec::new(),
+        });
+    }
+
+    // Query all common_config_* keys from settings table
+    let rows = sqlx::query(
+        "SELECT key, value FROM settings WHERE key LIKE 'common_config_%' ORDER BY key",
+    )
+    .fetch_all(&mut conn)
+    .await
+    .map_err(|err| format!("db_query_failed: {err}"))?;
+
+    let common_configs = rows
+        .iter()
+        .filter_map(|row| {
+            let key: Result<String, _> = row.try_get("key");
+            let value: Result<String, _> = row.try_get("value");
+
+            if let (Ok(key), Ok(value)) = (key, value) {
+                // Extract app_type from key: "common_config_claude" -> "claude"
+                if let Some(app_type) = key.strip_prefix("common_config_") {
+                    return Some(CcSwitchCommonConfig {
+                        app_type: app_type.to_string(),
+                        config_json: value,
+                    });
+                }
+            }
+            None
+        })
+        .collect();
+
+    let _ = conn.close().await;
+
+    Ok(CcSwitchCommonConfigResponse {
+        db_path: path.to_string_lossy().into_owned(),
+        common_configs,
+    })
 }
 
 #[cfg(test)]

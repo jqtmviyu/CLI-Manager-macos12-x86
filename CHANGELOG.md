@@ -1,5 +1,142 @@
 # Changelog
 
+## [V1.1.0] - 2026-06-16
+
+### 终端工具栏按钮自定义排序
+
+#### 核心功能
+
+- **工具栏按钮拖拽排序**：终端标签栏右侧工具栏的所有按钮（新建、Templates、历史命令、全屏、会话历史、Git 变更、统计）支持拖拽调整显示顺序，按用户偏好自由排列。
+- **拖拽视觉反馈**：拖动中按钮半透明（`opacity: 0.4`）、DragOverlay 跟随鼠标、插入位置指示器、光标变为 `grabbing`，与现有终端标签拖拽体验保持一致。
+- **激活距离阈值**：5px 激活距离有效区分点击与拖动，避免误触。
+- **持久化配置**：按钮顺序保存到本地设置（`terminalToolbarOrder` 字段），应用重启后保持用户自定义顺序。
+
+#### 统计按钮显隐控制
+
+- **新增统计按钮开关**：设置页面「通用设置 - 工具栏」区块新增「统计」显隐开关（默认显示），用户可按需隐藏统计按钮。
+- **统一管理**：所有工具栏按钮（除「新建」外）现在都支持显隐控制 + 拖拽排序，数据模型统一。
+
+#### 会话历史图标优化
+
+- **自定义图标**：会话历史按钮图标从 `Search` 替换为自定义 `ListClockIcon`（列表 + 时钟组合），语义更贴近"历史记录"，尺寸优化为 20px。
+
+#### 技术实现
+
+- **数据层**：`settingsStore.ts` 新增 `terminalToolbarOrder: string[]` 字段（默认 `["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "gitChanges", "stats"]`）、`TerminalToolbarVisibilitySettings.stats: boolean`（默认 `true`）、`sidebarToolbarVisibility` 与 `migrateTerminalToolbarOrder` 迁移函数。
+- **UI 层**：`TerminalTabs.tsx` 使用 `@dnd-kit/sortable` 实现工具栏按钮拖拽排序（独立 `DndContext`，不与终端标签拖拽冲突）、按 `terminalToolbarOrder` 顺序渲染、统计按钮接入 `visibility.stats` 条件渲染。
+- **设置页**：`GeneralSettingsPage.tsx` 新增「统计」开关，保持设置页职责单一（仅管理显隐，排序在工具栏操作）。
+- **图标组件**：新增 `src/components/ListClockIcon.tsx` 自定义 SVG 图标组件，兼容 lucide API（支持 `size` 属性）。
+
+#### 代码质量
+
+- TypeScript 类型检查通过，所有字段类型安全。
+- 迁移函数处理边界场景（过滤无效 key、补全缺失 key、兼容旧配置）。
+- 拖拽实现复用现有模式（与终端标签拖拽保持一致）。
+
+### Git 变更面板
+
+#### 核心功能
+
+- **终端工具栏新增「Git 变更」按钮**：在内置终端工具栏新增 Git 变更入口，打开侧边栏式 Git 变更面板，按当前终端 Tab 的项目路径展示工作区变更。
+- **文件类型彩色图标**：变更文件按类型显示对应的彩色图标，树形结构展示，便于快速识别。
+- **融入工具栏拖拽排序**：Git 变更按钮纳入 `terminalToolbarOrder` 拖拽排序体系，默认位于「会话历史」与「统计」之间，可与其它工具栏按钮一起自由排序。
+
+#### Diff 解析修复
+
+- **修复 diff 显示问题**：修正 Git 变更面板中部分 diff 内容无法正常显示的问题。
+- **修复 diff 格式不完整导致解析失败**：放宽 diff 解析容错，避免格式不完整时整体解析失败。
+
+### 侧边栏工具栏显隐控制
+
+- **新增侧边栏工具栏显隐设置**：新增 `sidebarToolbarVisibility`（统计 / Git 变更）配置，可分别控制侧边栏对应入口的显示，配置持久化。
+
+### 终端中文输入法修复（Claude Code / Codex）
+
+- **修复 Claude Code 输入法候选框不跟随光标**：候选框正确锚定到当前输入行并跟随光标移动。
+- **修复 Codex 输入法候选框固定在底部不跟随光标**：修正 Codex 流式重绘时候选框被固定在底部、不随光标移动的问题。
+
+## [V1.0.9] - 2026-06-16
+
+### 设置 - 供应商页全面优化
+
+#### 核心体验改善（P0）
+
+- **空态引导卡片**：数据库未连接时显示引导卡片，包含 cc-switch 作用说明、官网链接和三步使用指南（安装 → 配置 → 刷新），降低首次使用门槛。
+- **数据库路径卡片优化**：顶部新增连接状态徽标（绿色"已连接" / 灰色"未连接"），路径展示使用独立代码块背景区分，按钮文案优化为"使用默认路径"，布局更清晰。
+- **详情面板增强**：
+  - 新增可复用 `CopyButton` 组件，BASE_URL 和所有环境变量行右侧添加一键复制按钮，点击复制成功后显示 toast 提示。
+  - `configParseError` 供应商在详情面板顶部显示红色边框错误说明块，明确告知配置解析失败、env 数据可能不完整。
+- **错误提示优化**：数据库读取失败时使用红色边框 + AlertTriangle 图标的醒目样式，替代原有纯文本提示。
+
+#### 交互与性能提升（P1）
+
+- **列表布局响应式**：供应商列表宽度从固定 360px 改为响应式 `min-w-[280px] max-w-[400px] w-[30%]`，宽屏下空间利用更合理；列表项 padding 和间距收紧（`px-3 py-2.5` → `px-2.5 py-2`，`space-y-1.5` → `space-y-1`），一屏可显示更多供应商。
+- **搜索范围扩展**：搜索从 4 个字段扩展到 6 个（名称、BASE_URL、分类、模型、官网、备注），用户可按官网 URL 或备注关键词搜索；无结果时提示已搜索的所有字段范围。
+- **性能优化预分组**：新增 `providersByType` memo 按 app_type 预分组供应商，`visibleProviders` 从预分组结果筛选，避免每次切换类型或搜索时重复 filter 全量数据，提升大数据集下的响应速度。
+
+#### 锦上添花（P2）
+
+- **刷新成功反馈**：点击"刷新"按钮成功后显示 toast 提示"已刷新，共 X 个供应商"，页面初始加载不显示 toast，避免干扰；通过 `showToast` 可选参数区分手动刷新与自动加载。
+- **供应商数量提示**：筛选器下方显示"共 X 个供应商"，用户清楚当前筛选结果数量。
+- **环境变量折叠显示**：环境变量 >5 个时默认只显示前 5 个 + "展开全部（还有 N 个）"按钮，展开后显示全部并提供"收起"按钮；切换供应商时折叠状态自动重置，保持界面简洁。
+
+#### 代码质量
+
+- 新增可复用组件：`CopyButton`（统一复制交互）、`EmptyStateGuideCard`（首次使用引导）
+- TypeScript 类型检查通过，所有 hooks 依赖数组正确，边界情况处理完善
+- 代码规范审查通过，无未使用导入、无 console.log 残留
+
+### 设置 - 供应商配置展示增强
+
+#### 多 app_type 配置解析
+
+- **Codex / 多供应商类型解析支持**：供应商配置解析从硬编码 `ANTHROPIC_*` 改用通配符匹配（`*_BASE_URL` / `*_API_BASE` / `*_ENDPOINT` 识别 BASE_URL，`*_MODEL` 识别模型），自动支持 `OPENAI_*`（Codex）、`GOOGLE_*`（Gemini）、`DEEPSEEK_*` 等任意前缀，解决 Codex 等非 Claude 供应商 BASE_URL 与模型显示空白的问题。
+
+#### 通用配置读取与合并
+
+- **读取 cc-switch 通用配置**：新增 `ccswitch_list_common_configs` 命令，从 cc-switch `settings` 表读取 `common_config_{app_type}`（如 `common_config_claude` / `common_config_codex` / `common_config_gemini` 等）通用配置；表不存在时优雅降级返回空列表。
+- **供应商详情完整配置展示**：详情面板新增配置 Tabs，按"完整配置 → 供应商配置 → 通用配置"顺序展示，默认显示完整配置：
+  - **完整配置**：通用配置打底 + 供应商配置深度合并（供应商优先覆盖），即该供应商实际生效的完整配置。
+  - **供应商配置**：供应商自身的原始 `settings_config`。
+  - **通用配置**：当前 app_type 对应的 `common_config_{app_type}`，仅当匹配到时显示该 Tab。
+
+#### JSON 代码块美化
+
+- **语法高亮代码块**：新增 `JsonCodeBlock` 组件，配置 JSON 以深色背景（`#1e1e1e`，类 VSCode Dark）+ 语法高亮（键名蓝 / 字符串橙 / 数字绿 / 布尔与 null 浅蓝）+ 圆角边框展示；纯 CSS 实现无第三方依赖，渲染前对 HTML 转义防注入。
+- 每个 Tab 提供独立复制按钮，可一键复制对应配置 JSON。
+
+#### 代码质量
+
+- 后端 `parse_settings_config` 改用后缀通配，保留 Claude 供应商兼容；新增 `deepMerge` 前端深度合并工具。
+- Rust `cargo check` 与全部测试通过，TypeScript 类型检查通过。
+
+### 终端 - 跨平台默认 Shell 识别
+
+#### 核心改进
+
+- **按操作系统区分 Shell 选项**：新建/编辑终端及设置中心的"默认 Shell"现根据运行平台动态展示可选项——Windows（PowerShell / CMD / PowerShell Core / WSL / Git Bash / Bash）、macOS（Zsh / Bash / Fish / Sh）、Linux（Bash / Zsh / Fish / Sh），不再硬编码 Windows 专属终端。
+- **平台默认值**：新建终端时按系统自动选择默认 Shell（macOS → zsh，Linux → bash，Windows → powershell）；用户从未设置过"默认 Shell"时，设置项也按平台初始化，避免在 mac/linux 上残留 `powershell.exe`。
+- **跨平台配置兼容**：编辑在其它系统创建的终端时，若其 Shell 在当前平台不可用，下拉框保留为"（当前自定义）"选项，不丢失原配置。
+
+#### 详细实现
+
+- 后端（Rust）：
+  - 新增 `get_os_platform` 命令返回当前平台（`windows` / `macos` / `linux` / `unknown`）。
+  - `PtyManager::resolve_shell` 与外部终端 `shell_exe` 增加 `zsh` / `fish` / `sh` 支持；`bash` 与默认分支用 `cfg!(target_os)` 区分平台（Windows 用 `bash.exe` / `powershell.exe`，Unix 回退用户登录 Shell `$SHELL`，再回退 macOS=zsh / 其它=bash）。
+- 前端（TS/React）：
+  - `ShellKey` 扩展 Unix Shell；`normalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
+  - 新增 `getOsPlatform`、`getDefaultShellForPlatform`、`defaultShellForOs` 辅助与 `getShellOptions(os)` 平台选项映射。
+  - `ConfigModal`、`ThemeSettingsPage`、`settingsStore` 接入平台检测。
+
+#### 代码质量
+
+- 后端跨平台分支统一改用 `cfg!()` 宏，使 macOS/Linux 代码路径也在 Windows 上参与类型检查（无 mac/linux 环境亦可验证）。
+- TypeScript 类型检查与 `cargo check` 均通过。
+
+### 版本发布
+
+- 应用版本同步升级到 1.0.9（npm、Cargo、Tauri 配置）。
+
 ## [V1.0.8] - 2026-06-16
 
 ### Git 分支查询优化

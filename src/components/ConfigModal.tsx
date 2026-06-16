@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../stores/projectStore";
 import type { Project, Group } from "../lib/types";
-import { SHELL_OPTIONS } from "../lib/types";
+import { getShellOptions } from "../lib/types";
+import { getOsPlatform, defaultShellForOs, normalizeShellKey } from "../lib/shell";
+import type { OsPlatform } from "../lib/shell";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ChevronDown } from "./icons";
 import { Input } from "./ui/input";
@@ -33,6 +35,8 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   const isEdit = !!project;
   const isClone = !!cloneFrom;
 
+  const [osPlatform, setOsPlatform] = useState<OsPlatform>("windows");
+
   const [name, setName] = useState(
     cloneFrom ? `${cloneFrom.name} (副本)` : (project?.name ?? "")
   );
@@ -42,11 +46,25 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
   );
   const [cliTool, setCliTool] = useState(cloneFrom?.cli_tool ?? project?.cli_tool ?? "");
   const [startupCmd, setStartupCmd] = useState(cloneFrom?.startup_cmd ?? project?.startup_cmd ?? "");
-  const [shell, setShell] = useState(cloneFrom?.shell ?? project?.shell ?? "powershell");
+  const [shell, setShell] = useState(cloneFrom?.shell ?? project?.shell ?? "");
   const [envVarsText, setEnvVarsText] = useState(cloneFrom?.env_vars ?? project?.env_vars ?? "{}");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showConfirmEdit, setShowConfirmEdit] = useState(false);
+
+  // Detect OS and set default shell on mount
+  useEffect(() => {
+    void (async () => {
+      const platform = await getOsPlatform();
+      setOsPlatform(platform);
+
+      // 如果是新建且没有预设 shell，使用平台默认值
+      if (!isEdit && !isClone && !shell) {
+        setShell(defaultShellForOs(platform));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 只在 mount 时执行一次
 
   const handleBrowse = async () => {
     const selected = await open({ directory: true, title: "选择项目目录" });
@@ -142,6 +160,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
     ? groups.find((g) => g.id === groupId)?.name ?? "未知分组"
     : "不分组";
 
+  // Shell 选项：如果当前 shell 在平台选项中不存在，保留为"当前自定义（保留）"
+  const normalizedShell = normalizeShellKey(shell);
+  const isCustomShell = shell && !normalizedShell;
+  const shellOptions = [
+    ...(isCustomShell ? [{ value: shell, label: `${shell}（当前自定义）` }] : []),
+    ...getShellOptions(osPlatform),
+  ];
+
   return (
     <>
       <Dialog
@@ -221,7 +247,7 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onClose }: Pro
                   onChange={(e) => setShell(e.target.value)}
                   className="text-sm"
                 >
-                  {SHELL_OPTIONS.map((opt) => (
+                  {shellOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </Select>

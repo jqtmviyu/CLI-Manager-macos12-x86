@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { toast } from "sonner";
 import {
+  ActionIcon,
   Badge,
   Box,
   Button,
@@ -13,9 +14,27 @@ import {
   Loader,
   SegmentedControl,
   Stack,
+  Tabs,
   Text,
 } from "@mantine/core";
+import { AlertTriangle, Copy } from "@/components/icons";
 import { useSettingsStore } from "@/stores/settingsStore";
+
+// 深度合并对象（target 覆盖 source）
+function deepMerge(source: any, target: any): any {
+  if (typeof target !== "object" || target === null) return target;
+  if (typeof source !== "object" || source === null) return target;
+
+  const result = { ...source };
+  for (const key of Object.keys(target)) {
+    if (typeof target[key] === "object" && target[key] !== null && !Array.isArray(target[key])) {
+      result[key] = deepMerge(result[key], target[key]);
+    } else {
+      result[key] = target[key];
+    }
+  }
+  return result;
+}
 
 interface CcSwitchProvider {
   id: string;
@@ -32,12 +51,48 @@ interface CcSwitchProvider {
   apiFormat: string | null;
   maskedEnv: Record<string, string>;
   configParseError: boolean;
+  rawSettingsConfig: string;
 }
 
 interface CcSwitchProvidersResponse {
   dbPath: string;
   providers: CcSwitchProvider[];
 }
+
+interface CcSwitchCommonConfig {
+  appType: string;
+  configJson: string;
+}
+
+interface CcSwitchCommonConfigResponse {
+  dbPath: string;
+  commonConfigs: CcSwitchCommonConfig[];
+}
+
+const jsonCodeBlockStyles = `
+.json-code-block {
+  background: #1e1e1e;
+  border-radius: 8px;
+  padding: 16px;
+  overflow-y: auto;
+  font-family: var(--font-ui-mono);
+}
+
+.json-code-block pre {
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.json-key { color: #9cdcfe; }
+.json-string { color: #ce9178; }
+.json-number { color: #b5cea8; }
+.json-boolean { color: #569cd6; }
+`;
 
 const ERROR_HINTS: Record<string, string> = {
   db_not_found: "未找到 cc-switch 数据库文件，请确认已安装 cc-switch，或手动选择 cc-switch.db。",
@@ -50,6 +105,47 @@ function formatError(error: unknown): string {
     if (message.startsWith(code)) return hint;
   }
   return `读取 cc-switch 数据库失败：${message}`;
+}
+
+function CopyButton({ value, label = "已复制" }: { value: string; label?: string }) {
+  return (
+    <ActionIcon
+      size="xs"
+      variant="subtle"
+      onClick={() => {
+        navigator.clipboard.writeText(value);
+        toast.success(label);
+      }}
+      title="复制"
+    >
+      <Copy size={12} />
+    </ActionIcon>
+  );
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function JsonCodeBlock({ json, maxHeight = "400px" }: { json: string; maxHeight?: string }) {
+  // 简单的 JSON 语法高亮（纯 CSS）；先转义 HTML 再注入 span，避免 XSS
+  const highlightedJson = useMemo(() => {
+    // escapeHtml 仅转义 & < >，引号保留，正则可直接匹配
+    return escapeHtml(json)
+      .replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:') // 键名
+      .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>') // 字符串值
+      .replace(/: (-?\d+(?:\.\d+)?)/g, ': <span class="json-number">$1</span>') // 数字
+      .replace(/: (true|false|null)/g, ': <span class="json-boolean">$1</span>'); // 布尔/null
+  }, [json]);
+
+  return (
+    <Box className="json-code-block ui-thin-scroll" style={{ maxHeight }}>
+      <pre dangerouslySetInnerHTML={{ __html: highlightedJson }} />
+    </Box>
+  );
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -85,7 +181,7 @@ function ProviderListItem({
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+      className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
         isSelected
           ? "border-accent/40 bg-accent/10"
           : "border-border bg-bg-tertiary hover:opacity-80"
@@ -113,8 +209,69 @@ function ProviderListItem({
 }
 
 function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
+  const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
   const envEntries = Object.entries(provider.maskedEnv);
   const websiteUrl = provider.websiteUrl;
+  // 优化 9: 环境变量折叠状态
+  const [envExpanded, setEnvExpanded] = useState(false);
+  const displayedEnv = envExpanded ? envEntries : envEntries.slice(0, 5);
+  const hasMoreEnv = envEntries.length > 5;
+
+  // 通用配置加载
+  const [commonConfigs, setCommonConfigs] = useState<CcSwitchCommonConfig[]>([]);
+  const [commonConfigsLoaded, setCommonConfigsLoaded] = useState(false);
+
+  // 加载通用配置
+  useEffect(() => {
+    const loadCommonConfigs = async () => {
+      try {
+        const response = await invoke<CcSwitchCommonConfigResponse>(
+          "ccswitch_list_common_configs",
+          { dbPath: ccSwitchDbPath ?? undefined }
+        );
+        setCommonConfigs(response.commonConfigs);
+      } catch {
+        setCommonConfigs([]);
+      } finally {
+        setCommonConfigsLoaded(true);
+      }
+    };
+    void loadCommonConfigs();
+  }, [ccSwitchDbPath]);
+
+  // 解析供应商配置
+  const providerConfig = useMemo(() => {
+    try {
+      return JSON.parse(provider.rawSettingsConfig);
+    } catch {
+      return null;
+    }
+  }, [provider.rawSettingsConfig]);
+
+  // 匹配当前 appType 的通用配置（common_config_{appType}）
+  const commonConfig = useMemo(() => {
+    const match = commonConfigs.find((c) => c.appType === provider.appType);
+    if (!match) return null;
+    try {
+      return JSON.parse(match.configJson);
+    } catch {
+      return match.configJson; // 解析失败时保留原始文本
+    }
+  }, [commonConfigs, provider.appType]);
+
+  // 合并配置：通用配置 → 供应商配置（供应商优先覆盖）
+  const mergedConfig = useMemo(() => {
+    if (!commonConfigsLoaded || !providerConfig) return null;
+    if (!commonConfig || typeof commonConfig === "string") return providerConfig;
+
+    // 深度合并：通用配置打底，供应商配置覆盖
+    return deepMerge(commonConfig, providerConfig);
+  }, [providerConfig, commonConfig, commonConfigsLoaded]);
+
+  // 切换供应商时重置折叠状态
+  useEffect(() => {
+    setEnvExpanded(false);
+  }, [provider.id]);
 
   return (
     <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
@@ -161,10 +318,35 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
           )}
         </Box>
 
+        {provider.configParseError && (
+          <Box className="rounded border border-danger/40 bg-danger/10 px-2 py-1.5">
+            <Text size="xs" c="var(--danger)">
+              该供应商配置解析失败，env 数据可能不完整，无法应用到项目。
+            </Text>
+          </Box>
+        )}
+
         <Divider />
 
         <Stack gap="xs">
-          {provider.baseUrl && <InfoRow label="BASE_URL" value={provider.baseUrl} />}
+          {provider.baseUrl && (
+            <Group gap="md" wrap="nowrap" className="min-w-0">
+              <Text size="xs" c="var(--text-muted)" w={88} className="shrink-0">
+                BASE_URL
+              </Text>
+              <Text
+                component="code"
+                size="xs"
+                ff="var(--font-ui-mono)"
+                c="var(--on-surface)"
+                className="min-w-0 flex-1 break-all leading-5"
+                title={provider.baseUrl}
+              >
+                {provider.baseUrl}
+              </Text>
+              <CopyButton value={provider.baseUrl} />
+            </Group>
+          )}
           {provider.model && <InfoRow label="模型" value={provider.model} />}
           {provider.notes && (
             <Box>
@@ -186,22 +368,170 @@ function ProviderDetailPanel({ provider }: { provider: CcSwitchProvider }) {
                 环境变量 ({envEntries.length})
               </Text>
               <Stack gap={4} className="rounded-md bg-surface-container-lowest/70 px-3 py-2">
-                {envEntries.map(([key, value]) => (
-                  <Text
-                    key={key}
-                    component="code"
-                    size="xs"
-                    ff="var(--font-ui-mono)"
-                    c="var(--on-surface)"
-                    className="break-all leading-5"
-                  >
-                    {key}={value}
-                  </Text>
+                {displayedEnv.map(([key, value]) => (
+                  <Group key={key} gap="xs" wrap="nowrap" justify="space-between">
+                    <Text
+                      component="code"
+                      size="xs"
+                      ff="var(--font-ui-mono)"
+                      c="var(--on-surface)"
+                      className="min-w-0 flex-1 break-all leading-5"
+                    >
+                      {key}={value}
+                    </Text>
+                    <CopyButton value={`${key}=${value}`} />
+                  </Group>
                 ))}
               </Stack>
+              {hasMoreEnv && (
+                <Button
+                  size="compact-xs"
+                  variant="subtle"
+                  mt="xs"
+                  onClick={() => setEnvExpanded(!envExpanded)}
+                >
+                  {envExpanded ? "收起" : `展开全部（还有 ${envEntries.length - 5} 个）`}
+                </Button>
+              )}
             </Box>
           </>
         )}
+
+        <Divider />
+
+        {/* 配置 Tabs */}
+        <Tabs defaultValue="merged" variant="outline">
+          <Tabs.List>
+            <Tabs.Tab value="merged">完整配置</Tabs.Tab>
+            <Tabs.Tab value="provider">供应商配置</Tabs.Tab>
+            {commonConfigsLoaded && commonConfig && (
+              <Tabs.Tab value="common">通用配置 ({provider.appType})</Tabs.Tab>
+            )}
+          </Tabs.List>
+
+          {/* Tab 1: 完整配置 */}
+          <Tabs.Panel value="merged" pt="xs">
+            <Group justify="space-between" mb="xs">
+              <Text size="xs" c="var(--text-muted)">
+                {commonConfigsLoaded && commonConfig
+                  ? "通用配置 + 供应商配置合并结果（供应商优先）"
+                  : "供应商配置（无通用配置）"}
+              </Text>
+              <CopyButton
+                value={mergedConfig ? JSON.stringify(mergedConfig, null, 2) : provider.rawSettingsConfig}
+                label="已复制完整配置"
+              />
+            </Group>
+            {mergedConfig ? (
+              <JsonCodeBlock json={JSON.stringify(mergedConfig, null, 2)} />
+            ) : (
+              <Box className="rounded-md bg-surface-container-lowest/70 px-3 py-2">
+                <Text size="xs" c="var(--text-muted)">
+                  加载中...
+                </Text>
+              </Box>
+            )}
+          </Tabs.Panel>
+
+          {/* Tab 2: 供应商配置 */}
+          <Tabs.Panel value="provider" pt="xs">
+            <Group justify="space-between" mb="xs">
+              <Text size="xs" c="var(--text-muted)">
+                供应商原始配置
+              </Text>
+              <CopyButton value={provider.rawSettingsConfig} label="已复制" />
+            </Group>
+            {providerConfig ? (
+              <JsonCodeBlock json={JSON.stringify(providerConfig, null, 2)} />
+            ) : (
+              <Box className="rounded-md bg-surface-container-lowest/70 px-3 py-2">
+                <Text size="xs" c="var(--text-muted)">
+                  配置解析失败
+                </Text>
+              </Box>
+            )}
+          </Tabs.Panel>
+
+          {/* Tab 3: 通用配置 */}
+          {commonConfigsLoaded && commonConfig && (
+            <Tabs.Panel value="common" pt="xs">
+              <Group justify="space-between" mb="xs">
+                <Text size="xs" c="var(--text-muted)">
+                  common_config_{provider.appType}（来自 settings 表）
+                </Text>
+                <CopyButton
+                  value={typeof commonConfig === "string" ? commonConfig : JSON.stringify(commonConfig, null, 2)}
+                  label="已复制通用配置"
+                />
+              </Group>
+              <JsonCodeBlock
+                json={typeof commonConfig === "string" ? commonConfig : JSON.stringify(commonConfig, null, 2)}
+              />
+            </Tabs.Panel>
+          )}
+        </Tabs>
+      </Stack>
+    </Card>
+  );
+}
+
+function EmptyStateGuideCard() {
+  return (
+    <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
+      <Stack gap="md">
+        <Box>
+          <Text size="lg" fw={600} c="var(--on-surface)" mb="xs">
+            欢迎使用供应商设置
+          </Text>
+          <Text size="sm" c="var(--text-muted)" mb="md">
+            cc-switch 是一款供应商切换工具，可以帮助你管理多个 AI 服务提供商的配置。
+          </Text>
+        </Box>
+
+        <Divider />
+
+        <Box>
+          <Text size="sm" fw={500} c="var(--on-surface)" mb="xs">
+            开始使用
+          </Text>
+          <Stack gap="xs">
+            <Group gap="xs">
+              <Badge variant="light" color="blue" radius="xl" size="sm">
+                1
+              </Badge>
+              <Text size="sm" c="var(--on-surface)">
+                安装 cc-switch
+              </Text>
+            </Group>
+            <Group gap="xs">
+              <Badge variant="light" color="blue" radius="xl" size="sm">
+                2
+              </Badge>
+              <Text size="sm" c="var(--on-surface)">
+                配置你的供应商
+              </Text>
+            </Group>
+            <Group gap="xs">
+              <Badge variant="light" color="blue" radius="xl" size="sm">
+                3
+              </Badge>
+              <Text size="sm" c="var(--on-surface)">
+                回到此页点击刷新
+              </Text>
+            </Group>
+          </Stack>
+        </Box>
+
+        <Button
+          variant="light"
+          onClick={() => {
+            void openUrl("https://github.com/deanxv/cc-switch").catch((err) => {
+              toast.error("无法打开链接", { description: String(err) });
+            });
+          }}
+        >
+          访问 cc-switch 官网
+        </Button>
       </Stack>
     </Card>
   );
@@ -216,7 +546,7 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
   const [appTypeFilter, setAppTypeFilter] = useState("claude");
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
 
-  const loadProviders = useCallback(async () => {
+  const loadProviders = useCallback(async (showToast = false) => {
     setLoading(true);
     setError(null);
     try {
@@ -224,6 +554,10 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
         dbPath: ccSwitchDbPath ?? undefined,
       });
       setData(response);
+      // 优化 7: 刷新成功反馈（仅在手动刷新时显示）
+      if (showToast) {
+        toast.success(`已刷新，共 ${response.providers.length} 个供应商`);
+      }
     } catch (err) {
       setData(null);
       setError(formatError(err));
@@ -278,16 +612,31 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
     }
   }, [appTypeOptions, appTypeFilter]);
 
+  const providersByType = useMemo(() => {
+    return (data?.providers ?? []).reduce((acc, p) => {
+      if (!acc[p.appType]) acc[p.appType] = [];
+      acc[p.appType].push(p);
+      return acc;
+    }, {} as Record<string, CcSwitchProvider[]>);
+  }, [data]);
+
   const visibleProviders = useMemo(() => {
+    const list = providersByType[appTypeFilter] ?? [];
     const keyword = searchValue.trim().toLowerCase();
-    return (data?.providers ?? []).filter((provider) => {
-      if (provider.appType !== appTypeFilter) return false;
-      if (!keyword) return true;
-      return [provider.name, provider.baseUrl, provider.category, provider.model]
+    if (!keyword) return list;
+    return list.filter((provider) => {
+      return [
+        provider.name,
+        provider.baseUrl,
+        provider.category,
+        provider.model,
+        provider.websiteUrl,
+        provider.notes,
+      ]
         .filter((field): field is string => typeof field === "string")
         .some((field) => field.toLowerCase().includes(keyword));
     });
-  }, [data, appTypeFilter, searchValue]);
+  }, [providersByType, appTypeFilter, searchValue]);
 
   useEffect(() => {
     if (visibleProviders.length === 0) {
@@ -301,14 +650,20 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
 
   return (
     <Stack gap="md" className="flex-1">
+      <style>{jsonCodeBlockStyles}</style>
       <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
         <Stack gap="xs">
           <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-            <Box className="min-w-0">
-              <Text size="sm" fw={500} c="var(--on-surface)">
-                cc-switch 数据库
-              </Text>
-              <Text mt={4} size="xs" c="var(--text-muted)">
+            <Box className="min-w-0 flex-1">
+              <Group gap="xs" mb={4}>
+                <Text size="sm" fw={500} c="var(--on-surface)">
+                  cc-switch 数据库
+                </Text>
+                <Badge variant="light" color={data ? "green" : "gray"} radius="xl" size="sm">
+                  {data ? "已连接" : "未连接"}
+                </Badge>
+              </Group>
+              <Text size="xs" c="var(--text-muted)">
                 只读解析 cc-switch 的供应商配置；密钥已脱敏，留空使用默认路径
                 ~/.cc-switch/cc-switch.db。
               </Text>
@@ -319,25 +674,40 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
               </Button>
               {ccSwitchDbPath && (
                 <Button size="compact-sm" variant="subtle" color="gray" onClick={() => void resetDbPath()}>
-                  重置默认
+                  使用默认路径
                 </Button>
               )}
-              <Button size="compact-sm" variant="default" onClick={() => void loadProviders()} loading={loading}>
+              <Button size="compact-sm" variant="default" onClick={() => void loadProviders(true)} loading={loading}>
                 刷新
               </Button>
             </Group>
           </Group>
-          <InfoRow label="路径" value={data?.dbPath ?? ccSwitchDbPath ?? "默认路径"} />
+          <Box className="rounded bg-surface-container-lowest/70 px-3 py-2">
+            <Text
+              component="code"
+              size="xs"
+              ff="var(--font-ui-mono)"
+              c="var(--on-surface)"
+              className="break-all leading-5"
+            >
+              {data?.dbPath ?? ccSwitchDbPath ?? "默认路径"}
+            </Text>
+          </Box>
         </Stack>
       </Card>
 
       {error && (
-        <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
-          <Text size="sm" c="var(--danger, #e5484d)">
-            {error}
-          </Text>
+        <Card className="border border-danger/40 bg-surface-container-low" p="sm" radius="lg">
+          <Group gap="xs" align="start">
+            <AlertTriangle size={16} className="shrink-0 text-danger" />
+            <Text size="sm" c="var(--danger)" className="flex-1">
+              {error}
+            </Text>
+          </Group>
         </Card>
       )}
+
+      {!data && !loading && !error && <EmptyStateGuideCard />}
 
       {loading && !data && (
         <Group justify="center" py="xl">
@@ -355,15 +725,24 @@ export function ProviderSettingsPage({ searchValue }: { searchValue: string }) {
         />
       )}
 
+      {/* 优化 8: 供应商数量提示 */}
+      {data && visibleProviders.length > 0 && (
+        <Text size="xs" c="var(--text-muted)">
+          共 {visibleProviders.length} 个供应商
+        </Text>
+      )}
+
       {data && visibleProviders.length === 0 && !loading && (
         <Text size="sm" c="var(--text-muted)" py="md">
-          {searchValue.trim() ? "没有匹配的供应商。" : "该类型下没有供应商。"}
+          {searchValue.trim()
+            ? `未找到匹配「${searchValue.trim()}」的供应商，已搜索：名称、BASE_URL、分类、模型、官网、备注`
+            : "该类型下没有供应商。"}
         </Text>
       )}
 
       {data && visibleProviders.length > 0 && (
         <Box className="flex min-h-0 flex-1 gap-4">
-          <Box className="w-[360px] shrink-0 space-y-1.5 overflow-y-auto">
+          <Box className="min-w-[280px] max-w-[400px] w-[30%] shrink-0 space-y-1 overflow-y-auto">
             {visibleProviders.map((provider) => (
               <ProviderListItem
                 key={`${provider.appType}-${provider.id}`}

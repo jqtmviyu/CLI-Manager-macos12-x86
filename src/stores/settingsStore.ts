@@ -3,6 +3,7 @@ import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { resolveAutoTerminalThemeId } from "../lib/terminalThemes";
 import { backgroundImageExists } from "../lib/assetUrl";
+import { getDefaultShellForPlatform } from "../lib/shell";
 
 export type ThemeMode = "dark" | "light" | "system";
 export type LightThemePalette =
@@ -63,6 +64,7 @@ export interface TerminalToolbarVisibilitySettings {
   commandHistory: boolean;
   fullscreen: boolean;
   sessionHistory: boolean;
+  stats: boolean;
   showText: boolean;
 }
 
@@ -150,6 +152,7 @@ interface Settings {
   unsplitBehavior: UnsplitBehavior;
   terminalToolbarVisibility: TerminalToolbarVisibilitySettings;
   sidebarToolbarVisibility: SidebarToolbarVisibilitySettings;
+  terminalToolbarOrder: string[];
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   terminalBackground: TerminalBackgroundSettings;
@@ -206,12 +209,14 @@ const DEFAULTS: Settings = {
     commandHistory: true,
     fullscreen: true,
     sessionHistory: true,
+    stats: true,
     showText: false,
   },
   sidebarToolbarVisibility: {
     stats: true,
     gitChanges: true,
   },
+  terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "gitChanges", "stats"],
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   terminalBackground: {
@@ -303,6 +308,7 @@ export function migrateTerminalToolbarVisibility(value: unknown): TerminalToolba
     commandHistory: typeof raw.commandHistory === "boolean" ? raw.commandHistory : defaults.commandHistory,
     fullscreen: typeof raw.fullscreen === "boolean" ? raw.fullscreen : defaults.fullscreen,
     sessionHistory: typeof raw.sessionHistory === "boolean" ? raw.sessionHistory : defaults.sessionHistory,
+    stats: typeof raw.stats === "boolean" ? raw.stats : defaults.stats,
     showText: typeof raw.showText === "boolean" ? raw.showText : defaults.showText,
   };
 }
@@ -318,6 +324,16 @@ export function migrateSidebarToolbarVisibility(value: unknown): SidebarToolbarV
     stats: typeof raw.stats === "boolean" ? raw.stats : defaults.stats,
     gitChanges: typeof raw.gitChanges === "boolean" ? raw.gitChanges : defaults.gitChanges,
   };
+}
+
+export function migrateTerminalToolbarOrder(value: unknown): string[] {
+  const defaults = DEFAULTS.terminalToolbarOrder;
+  if (!Array.isArray(value)) return [...defaults];
+
+  const validKeys = new Set(defaults);
+  const filtered = value.filter((k): k is string => typeof k === "string" && validKeys.has(k));
+  const missing = defaults.filter((k) => !filtered.includes(k));
+  return [...filtered, ...missing];
 }
 
 function migrateUnsplitBehavior(value: unknown): UnsplitBehavior {
@@ -458,12 +474,23 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     entries.terminalToolbarVisibility = migrateTerminalToolbarVisibility(entries.terminalToolbarVisibility);
     entries.sidebarToolbarVisibility = migrateSidebarToolbarVisibility(entries.sidebarToolbarVisibility);
+    entries.terminalToolbarOrder = migrateTerminalToolbarOrder(entries.terminalToolbarOrder);
     entries.unsplitBehavior = migrateUnsplitBehavior(entries.unsplitBehavior);
     entries.showProjectTreeBadges =
       typeof entries.showProjectTreeBadges === "boolean"
         ? entries.showProjectTreeBadges
         : DEFAULTS.showProjectTreeBadges;
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
+
+    // 默认 Shell：用户从未设置过时，根据操作系统选择合适的默认值
+    // （DEFAULTS.defaultShell 是 Windows 的 powershell.exe，在 mac/linux 上不合适）
+    if (entries.defaultShell === undefined) {
+      try {
+        entries.defaultShell = await getDefaultShellForPlatform();
+      } catch {
+        entries.defaultShell = DEFAULTS.defaultShell;
+      }
+    }
 
     entries.shellRuntimeMonitoringEnabled =
       typeof entries.shellRuntimeMonitoringEnabled === "boolean"
