@@ -154,6 +154,8 @@ interface Settings {
   terminalToolbarVisibility: TerminalToolbarVisibilitySettings;
   sidebarToolbarVisibility: SidebarToolbarVisibilitySettings;
   terminalToolbarOrder: string[];
+  /** 是否把实时统计与 Git 变更合并为带 Tab 的单一侧边面板；关闭后两者可并排独立显示。 */
+  terminalSidePanelMerged: boolean;
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   terminalBackground: TerminalBackgroundSettings;
@@ -219,6 +221,7 @@ const DEFAULTS: Settings = {
     gitChanges: true,
   },
   terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "gitChanges", "stats"],
+  terminalSidePanelMerged: true,
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   terminalBackground: {
@@ -479,6 +482,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.sidebarToolbarVisibility = migrateSidebarToolbarVisibility(entries.sidebarToolbarVisibility);
     entries.terminalToolbarOrder = migrateTerminalToolbarOrder(entries.terminalToolbarOrder);
     entries.unsplitBehavior = migrateUnsplitBehavior(entries.unsplitBehavior);
+    entries.terminalSidePanelMerged =
+      typeof entries.terminalSidePanelMerged === "boolean"
+        ? entries.terminalSidePanelMerged
+        : DEFAULTS.terminalSidePanelMerged;
     entries.showProjectTreeBadges =
       typeof entries.showProjectTreeBadges === "boolean"
         ? entries.showProjectTreeBadges

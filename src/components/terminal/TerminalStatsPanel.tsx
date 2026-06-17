@@ -29,6 +29,8 @@ import { TokenUsageCard, ModelContextCard, TrendCard, ToolsCard, TodayUsageCard 
 interface TerminalStatsPanelProps {
   activeSessionId: string | null;
   open: boolean;
+  visible?: boolean;
+  embedded?: boolean;
 }
 
 const POLL_INTERVAL_MS = 10_000;
@@ -198,7 +200,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   );
 }
 
-export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanelProps) {
+export function TerminalStatsPanel({ activeSessionId, open, visible = true, embedded = false }: TerminalStatsPanelProps) {
   const terminalSessions = useTerminalStore((state) => state.sessions);
   const projects = useProjectStore((state) => state.projects);
 
@@ -240,20 +242,21 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
   const tokensBound =
     Boolean(terminalSession?.cliSessionId) &&
     latestSession?.session_id === terminalSession?.cliSessionId;
+  const panelActive = open && visible;
 
   // A6: 统一定时器调度 - 10s 主节拍同时触发会话数据轮询和 git 分支查询
   useEffect(() => {
-    if (!open) return;
+    if (!panelActive) return;
     const timer = window.setInterval(() => {
       setPollTrigger((prev) => prev + 1);
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [open]);
+  }, [panelActive]);
 
   // 会话数据轮询：updated_at 未变化时跳过 jsonl 重解析
   // 多窗口隔离：scopeKey 含 activeSessionId(tabId)，不同终端窗口的数据各自独立缓存与查询
   useEffect(() => {
-    if (!open || !projectPath) {
+    if (!panelActive || !projectPath) {
       lastPathRef.current = null;
       latestRef.current = null;
       setLatestSession(null);
@@ -303,11 +306,11 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
     };
     // activeSessionId 入依赖：切换 Tab 时立即重新核对最近会话（unchanged 时开销仅一次列表查询）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, projectPath, sourceFilter, terminalSession?.cliSessionId, refreshSeq, activeSessionId, pollTrigger]);
+  }, [panelActive, projectPath, sourceFilter, terminalSession?.cliSessionId, refreshSeq, activeSessionId, pollTrigger]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
   useEffect(() => {
-    if (!open || !latestSession) {
+    if (!panelActive || !latestSession) {
       setTodayStats(null);
       return;
     }
@@ -321,16 +324,16 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
     return () => {
       cancelled = true;
     };
-  }, [open, latestSession, sourceFilter]);
+  }, [panelActive, latestSession, sourceFilter]);
 
   // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
   useEffect(() => {
-    if (!open || updatedAt === null) return;
+    if (!panelActive || updatedAt === null) return;
     const timer = window.setInterval(() => {
       setNowTick((prev) => prev + 1);
     }, TICK_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [open, updatedAt]);
+  }, [panelActive, updatedAt]);
 
   const stats = useMemo(() => calculateTokenStats(latestSession), [latestSession]);
 
@@ -343,12 +346,12 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
   // A6: 通过 pollTrigger 与会话数据轮询共用 10s 节拍
   const currentBranch = useCurrentGitBranch(
     projectPath,
-    open,
+    panelActive,
     latestSession?.branch ?? null,
     pollTrigger
   );
 
-  if (!open) return null;
+  if (!panelActive) return null;
 
   const projectName = project?.name || latestSession?.project_key || "—";
 
@@ -356,9 +359,14 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
   const boundSession = tokensBound ? latestSession : null;
   const boundStats = tokensBound ? stats : EMPTY_TOKEN_STATS;
 
+  const containerClassName = embedded
+    ? "flex h-full min-h-0 flex-col gap-2 overflow-y-auto p-2 font-mono ui-thin-scroll"
+    : "flex w-[290px] shrink-0 flex-col gap-2 overflow-y-auto border-l border-border p-2 font-mono ui-thin-scroll";
+  const Container = embedded ? "div" : "aside";
+
   return (
-    <aside
-      className="flex w-[290px] shrink-0 flex-col gap-2 overflow-y-auto ui-thin-scroll border-l border-border p-2 font-mono"
+    <Container
+      className={containerClassName}
       style={{ backgroundColor: TERM.bg }}
     >
       <div className="flex items-center justify-between px-1 py-0.5">
@@ -399,6 +407,6 @@ export function TerminalStatsPanel({ activeSessionId, open }: TerminalStatsPanel
           <TodayUsageCard stats={todayStats} loading={loadingToday} />
         </>
       )}
-    </aside>
+    </Container>
   );
 }

@@ -29,6 +29,7 @@ import { XTermTerminal } from "./XTermTerminal";
 import { CommandTemplatePanel } from "./CommandTemplatePanel";
 import { CommandHistoryPanel } from "./CommandHistoryPanel";
 import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
+import { TerminalSidePanel, type TerminalSidePanelTab } from "./terminal/TerminalSidePanel";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { Terminal, Plus, ListClockIcon, X, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch } from "./icons";
 import { EmptyState } from "./ui/EmptyState";
@@ -1058,6 +1059,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const terminalBackgroundImagePath = useSettingsStore((s) => s.terminalBackground.imagePath);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
+  const sidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
   const updateSettings = useSettingsStore((s) => s.update);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
@@ -1070,8 +1072,11 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
   const [activeDragSessionId, setActiveDragSessionId] = useState<string | null>(null);
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
-  const [statsPanelOpen, setStatsPanelOpen] = useState(false);
-  const [gitChangesPanelOpen, setGitChangesPanelOpen] = useState(false);
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  const [sidePanelTab, setSidePanelTab] = useState<TerminalSidePanelTab>("stats");
+  // 非合并模式：实时统计与 Git 变更各自独立开关，可并排显示
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [gitOpen, setGitOpen] = useState(false);
   const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
   const splitPickerOpenFrameRef = useRef<number | null>(null);
   const splitPickerOpenTimerRef = useRef<number | null>(null);
@@ -1080,6 +1085,10 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const toolbarSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const allPanes = useMemo(() => collectPaneLeaves(paneTree), [paneTree]);
+  const activeSession = useMemo(
+    () => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null,
+    [activeSessionId, sessions]
+  );
   const activeDragSession = useMemo(
     () => activeDragSessionId ? sessions.find((session) => session.id === activeDragSessionId) ?? null : null,
     [activeDragSessionId, sessions]
@@ -1104,6 +1113,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   } as CSSProperties;
   const historyActive = historyOpen && activeWorkspaceTab === "history";
   const showToolbarText = terminalToolbarVisibility.showText;
+  const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
+  const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
 
   useEffect(() => {
     if (!historyOpen && activeWorkspaceTab === "history") setActiveWorkspaceTab("terminal");
@@ -1164,58 +1175,83 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     setActive(sessionId);
   }, [setActive]);
 
-  const handleToggleStatsPanel = useCallback(async () => {
-    if (!statsPanelOpen) {
-      // 打开前检查：实时统计需要 Hook
-      try {
-        const settings = useSettingsStore.getState();
-        const status = await invoke<{ claude: { status: string }; codex: { status: string } }>(
-          "hook_settings_get_status",
-          {
-            selectedDir: settings.claudeHookConfigDir?.trim() || null,
-            codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
-          }
-        );
-        if (status.claude.status !== "installed" && status.codex.status !== "installed") {
-          toast.warning("实时统计需要先安装 Hook", {
-            description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到设置 → Hook 设置中安装对应工具的 Hook。",
-          });
-          return;
+  const ensureStatsPanelAllowed = useCallback(async () => {
+    try {
+      const settings = useSettingsStore.getState();
+      const status = await invoke<{ claude: { status: string }; codex: { status: string } }>(
+        "hook_settings_get_status",
+        {
+          selectedDir: settings.claudeHookConfigDir?.trim() || null,
+          codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
         }
-      } catch (err) {
-        logError("Failed to check hook status before opening terminal stats panel", err);
+      );
+      if (status.claude.status !== "installed" && status.codex.status !== "installed") {
+        toast.warning("实时统计需要先安装 Hook", {
+          description: "实时统计依赖 Claude/Codex Hook 上报 sessionId。请先到设置 → Hook 设置中安装对应工具的 Hook。",
+        });
+        return false;
       }
-      // 响应式约束：窗口宽度 < 1100px 时，打开实时统计会自动关闭 Git 变更面板
-      if (window.innerWidth < 1100 && gitChangesPanelOpen) {
-        setGitChangesPanelOpen(false);
-      }
+    } catch (err) {
+      logError("Failed to check hook status before opening terminal stats panel", err);
     }
-    setStatsPanelOpen((prev) => !prev);
-  }, [statsPanelOpen, gitChangesPanelOpen]);
+    return true;
+  }, []);
+
+  const handleToggleStatsPanel = useCallback(async () => {
+    if (statsPanelActive) {
+      if (sidePanelMerged) setSidePanelOpen(false);
+      else setStatsOpen(false);
+      return;
+    }
+    const allowed = await ensureStatsPanelAllowed();
+    if (!allowed) return;
+    if (sidePanelMerged) {
+      setSidePanelTab("stats");
+      setSidePanelOpen(true);
+    } else {
+      // 窄屏下退化为单面板：打开实时统计时收起 Git，避免挤压终端
+      if (window.innerWidth < 1100) setGitOpen(false);
+      setStatsOpen(true);
+    }
+  }, [ensureStatsPanelAllowed, sidePanelMerged, statsPanelActive]);
 
   const handleToggleGitChangesPanel = useCallback(() => {
-    setGitChangesPanelOpen((prev) => {
-      const next = !prev;
-      // 响应式约束：窗口宽度 < 1100px 时，打开 Git 面板会自动关闭实时统计面板
-      if (next && window.innerWidth < 1100 && statsPanelOpen) {
-        setStatsPanelOpen(false);
-      }
-      return next;
-    });
-  }, [statsPanelOpen]);
+    if (gitPanelActive) {
+      if (sidePanelMerged) setSidePanelOpen(false);
+      else setGitOpen(false);
+      return;
+    }
+    if (sidePanelMerged) {
+      setSidePanelTab("git");
+      setSidePanelOpen(true);
+    } else {
+      // 窄屏下退化为单面板：打开 Git 时收起实时统计，避免挤压终端
+      if (window.innerWidth < 1100) setStatsOpen(false);
+      setGitOpen(true);
+    }
+  }, [gitPanelActive, sidePanelMerged]);
 
-  // 响应式约束：窗口缩小到 < 1100px 且两个侧栏同时打开时，自动收起 Git 变更面板（保留实时统计）
+  const handleSidePanelTabChange = useCallback((tab: TerminalSidePanelTab) => {
+    if (tab === "stats") {
+      void ensureStatsPanelAllowed().then((allowed) => {
+        if (allowed) setSidePanelTab("stats");
+      });
+      return;
+    }
+    setSidePanelTab(tab);
+  }, [ensureStatsPanelAllowed]);
+
+  // 响应式约束：非合并模式下两个面板各占固定宽度，窗口过窄时会挤压终端。
+  // 同时打开且窗口 < 1100px 时自动收起 Git 面板（保留实时统计），并随窗口缩小持续生效。
   useEffect(() => {
-    if (!statsPanelOpen || !gitChangesPanelOpen) return;
-    const handleResize = () => {
-      if (window.innerWidth < 1100) {
-        setGitChangesPanelOpen(false);
-      }
+    if (sidePanelMerged || !statsOpen || !gitOpen) return;
+    const enforce = () => {
+      if (window.innerWidth < 1100) setGitOpen(false);
     };
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [statsPanelOpen, gitChangesPanelOpen]);
+    enforce();
+    window.addEventListener("resize", enforce);
+    return () => window.removeEventListener("resize", enforce);
+  }, [sidePanelMerged, statsOpen, gitOpen]);
 
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {
@@ -1223,14 +1259,13 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       return;
     }
 
-    const activeSession = sessions.find((session) => session.id === activeSessionId);
     const project = activeSession?.projectId ? projects.find((item) => item.id === activeSession.projectId) : undefined;
     setActiveWorkspaceTab("history");
     void openHistory({
       sourceFilter: resolveHistorySourceFilter(project?.cli_tool),
       projectPath: project?.path ?? null,
     });
-  }, [activeSessionId, closeHistory, historyOpen, openHistory, projects, sessions]);
+  }, [activeSession, closeHistory, historyOpen, openHistory, projects]);
 
   const handleOpenSplitPicker = useCallback((sessionId: string, direction: TerminalPaneSplitDirection, anchor?: DOMRect) => {
     clearSplitPickerOpenSchedule();
@@ -1410,13 +1445,13 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleToggleGitChangesPanel}
           className={
             showToolbarText
-              ? `ui-flat-action ui-toolbar-button ${gitChangesPanelOpen ? "ui-primary-action" : ""}`
+              ? `ui-flat-action ui-toolbar-button ${gitPanelActive ? "ui-primary-action" : ""}`
               : "ui-focus-ring ui-icon-action"
           }
-          data-active={gitChangesPanelOpen ? "true" : "false"}
-          title={gitChangesPanelOpen ? "关闭 Git 变更" : "打开 Git 变更"}
-          aria-label={gitChangesPanelOpen ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
-          aria-pressed={gitChangesPanelOpen}
+          data-active={gitPanelActive ? "true" : "false"}
+          title={gitPanelActive ? "关闭 Git 变更" : "打开 Git 变更"}
+          aria-label={gitPanelActive ? "关闭 Git 变更面板" : "打开 Git 变更面板"}
+          aria-pressed={gitPanelActive}
         >
           <GitBranch size={13} strokeWidth={1.8} />
           {showToolbarText && <span>Git 变更</span>}
@@ -1427,13 +1462,13 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           onClick={handleToggleStatsPanel}
           className={
             showToolbarText
-              ? `ui-flat-action ui-toolbar-button ${statsPanelOpen ? "ui-primary-action" : ""}`
+              ? `ui-flat-action ui-toolbar-button ${statsPanelActive ? "ui-primary-action" : ""}`
               : "ui-focus-ring ui-icon-action"
           }
-          data-active={statsPanelOpen ? "true" : "false"}
-          title={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
-          aria-label={statsPanelOpen ? "关闭统计面板" : "打开统计面板"}
-          aria-pressed={statsPanelOpen}
+          data-active={statsPanelActive ? "true" : "false"}
+          title={statsPanelActive ? "关闭统计面板" : "打开统计面板"}
+          aria-label={statsPanelActive ? "关闭统计面板" : "打开统计面板"}
+          aria-pressed={statsPanelActive}
         >
           <BarChart3 size={13} strokeWidth={1.8} />
           {showToolbarText && <span>统计</span>}
@@ -1479,7 +1514,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   }, [
     activeToolbarDragId,
     fullscreen,
-    gitChangesPanelOpen,
+    gitPanelActive,
     handleNewTab,
     handleOpenHistoryTab,
     handleToggleGitChangesPanel,
@@ -1491,7 +1526,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     onToggleFullscreen,
     sessionHistoryShortcutHint,
     showToolbarText,
-    statsPanelOpen,
+    statsPanelActive,
     terminalToolbarOrder,
     terminalToolbarVisibility,
     toolbarSensors,
@@ -1632,14 +1667,23 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
               </div>
             )}
           </div>
-          <TerminalStatsPanel activeSessionId={activeSessionId} open={statsPanelOpen} />
-          {gitChangesPanelOpen && (
-            <Suspense fallback={null}>
-              <GitChangesPanel
-                open={gitChangesPanelOpen}
-                projectPath={activeSessionId ? sessions.find(s => s.id === activeSessionId)?.cwd ?? null : null}
-              />
-            </Suspense>
+          {sidePanelMerged ? (
+            <TerminalSidePanel
+              open={sidePanelOpen}
+              activeTab={sidePanelTab}
+              activeSessionId={activeSessionId}
+              projectPath={activeSession?.cwd ?? null}
+              onTabChange={handleSidePanelTabChange}
+            />
+          ) : (
+            <>
+              <TerminalStatsPanel activeSessionId={activeSessionId} open={statsOpen} />
+              {gitOpen && (
+                <Suspense fallback={null}>
+                  <GitChangesPanel open={gitOpen} projectPath={activeSession?.cwd ?? null} />
+                </Suspense>
+              )}
+            </>
           )}
         </div>
       </div>

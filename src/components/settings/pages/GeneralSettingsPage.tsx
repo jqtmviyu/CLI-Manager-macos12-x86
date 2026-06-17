@@ -422,6 +422,7 @@ export function GeneralSettingsPage() {
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
   const showProjectTreeBadges = useSettingsStore((s) => s.showProjectTreeBadges);
+  const terminalSidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
   const [uiFontSizeDraft, setUiFontSizeDraft] = useState(uiFontSize);
@@ -768,6 +769,25 @@ export function GeneralSettingsPage() {
                   checked={showProjectTreeBadges}
                   onChange={(event) => void update("showProjectTreeBadges", event.currentTarget.checked)}
                   aria-label={showProjectTreeBadges ? "隐藏项目树徽章" : "显示项目树徽章"}
+                />
+              </Group>
+            </Card>
+
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    合并实时统计与 Git 变更面板
+                  </Text>
+                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                    默认开启：两者合并为一个可切换 Tab 的侧边面板。关闭后实时统计与 Git 变更各自独立，可同时并排显示。
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={terminalSidePanelMerged}
+                  onChange={(event) => void update("terminalSidePanelMerged", event.currentTarget.checked)}
+                  aria-label={terminalSidePanelMerged ? "关闭面板合并" : "开启面板合并"}
                 />
               </Group>
             </Card>
