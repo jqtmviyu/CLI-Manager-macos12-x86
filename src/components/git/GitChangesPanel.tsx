@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, GitBranch, Undo2 } from "lucide-react";
+import { RefreshCw, GitBranch, Undo2, Files, FilePen, FilePlus, FileMinus } from "lucide-react";
 import { useGitStore } from "../../stores/gitStore";
 import { GitChangesTree } from "./GitChangesTree";
+import { STATUS_CONFIG } from "./GitStatusIcon";
 import { DiffViewerModal } from "./DiffViewerModal";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { TERM, EmptyHint } from "../stats/termStatsUi";
@@ -136,10 +137,10 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
   const trackableCount = changes.filter((c) => c.status !== "U" && c.status !== "??").length;
 
   const filterButtons = [
-    { label: "全部", value: "all" as const, count: allCount, color: TERM.fg },
-    { label: "修改", value: "M" as const, count: modifiedCount, color: TERM.blue },
-    { label: "新增", value: "A" as const, count: addedCount, color: TERM.green },
-    { label: "删除", value: "D" as const, count: deletedCount, color: "#808080" },
+    { label: "全部", value: "all" as const, count: allCount, color: TERM.fg, icon: Files },
+    { label: "修改", value: "M" as const, count: modifiedCount, color: STATUS_CONFIG.M.color, icon: FilePen },
+    { label: "新增", value: "A" as const, count: addedCount, color: STATUS_CONFIG.A.color, icon: FilePlus },
+    { label: "删除", value: "D" as const, count: deletedCount, color: STATUS_CONFIG.D.color, icon: FileMinus },
   ];
 
   const panelClassName = embedded
@@ -200,22 +201,27 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
       {/* Filter */}
       {changes.length > 0 && (
         <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
-          {filterButtons.map((btn) => (
-            <button
-              key={btn.value}
-              type="button"
-              onClick={() => setStatusFilter(btn.value)}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
-              style={{
-                backgroundColor: statusFilter === btn.value ? `${btn.color}30` : "transparent",
-                color: statusFilter === btn.value ? btn.color : TERM.dim,
-                border: `1px solid ${statusFilter === btn.value ? btn.color : "transparent"}`,
-              }}
-            >
-              <span>{btn.label}</span>
-              <span className="font-bold">{btn.count}</span>
-            </button>
-          ))}
+          {filterButtons.map((btn) => {
+            const Icon = btn.icon;
+            const active = statusFilter === btn.value;
+            return (
+              <button
+                key={btn.value}
+                type="button"
+                onClick={() => setStatusFilter(btn.value)}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors"
+                style={{
+                  backgroundColor: active ? `${btn.color}30` : "transparent",
+                  color: active ? btn.color : TERM.dim,
+                  border: `1px solid ${active ? btn.color : "transparent"}`,
+                }}
+              >
+                <Icon size={11} strokeWidth={2} style={{ color: btn.color }} />
+                <span>{btn.label}</span>
+                <span className="font-bold">{btn.count}</span>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -226,19 +232,19 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
           {modifiedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: TERM.blue }}>{modifiedCount}</span> 修改
+              <span style={{ color: STATUS_CONFIG.M.color }}>{modifiedCount}</span> 修改
             </>
           )}
           {addedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: TERM.green }}>{addedCount}</span> 新增
+              <span style={{ color: STATUS_CONFIG.A.color }}>{addedCount}</span> 新增
             </>
           )}
           {deletedCount > 0 && (
             <>
               {" · "}
-              <span style={{ color: "#808080" }}>{deletedCount}</span> 删除
+              <span style={{ color: STATUS_CONFIG.D.color }}>{deletedCount}</span> 删除
             </>
           )}
         </div>

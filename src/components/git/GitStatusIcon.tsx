@@ -5,7 +5,7 @@ interface GitStatusIconProps {
   size?: number;
 }
 
-const STATUS_CONFIG: Record<
+export const STATUS_CONFIG: Record<
   GitFileChange["status"],
   { label: string; color: string; symbol: string }
 > = {
