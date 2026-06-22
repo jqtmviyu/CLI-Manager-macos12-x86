@@ -552,7 +552,14 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     const onContextMenu = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      setMenuState({ x: e.clientX, y: e.clientY, hasSelection: terminal.hasSelection() });
+      if (terminal.hasSelection()) {
+        void copySelection();
+        terminal.clearSelection();
+        terminal.focus();
+        setMenuState(null);
+        return;
+      }
+      setMenuState({ x: e.clientX, y: e.clientY, hasSelection: false });
     };
     contextMenuTarget.addEventListener("contextmenu", onContextMenu);
 
