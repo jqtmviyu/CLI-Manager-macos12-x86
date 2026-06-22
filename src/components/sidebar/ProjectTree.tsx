@@ -7,6 +7,7 @@ import { SidebarSkeleton } from "../ui/Skeleton";
 import { EmptyState } from "../ui/EmptyState";
 import { Popover, PopoverAnchor, PopoverContent } from "../ui/popover";
 import { Folder, Plus, Terminal } from "../icons";
+import { VendorIcon, inferVendor } from "../VendorIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
 import { useTreeActions, type TreeActions } from "./TreeContext";
 
@@ -434,6 +435,7 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
   const p = node.project;
   const status = actions.getProjectStatus(p.id);
   const selected = actions.selectedId === p.id || actions.selectedProjectIds.has(p.id);
+  const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
   return (
     <button
       className={`ui-tree-collapsed-item my-0.5 flex ${sizeClass} items-center justify-center rounded-xl transition-colors`}
@@ -445,6 +447,8 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
     >
       {status ? (
         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} />
+      ) : cliVendor ? (
+        <VendorIcon vendor={cliVendor} size={15} />
       ) : (
         <Terminal size={15} strokeWidth={1.5} />
       )}
@@ -561,6 +565,7 @@ function renderFlyoutNodes(nodes: TNode[], depth: number, actions: TreeActions, 
     }
     const p = child.project;
     const status = actions.getProjectStatus(p.id);
+    const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
     return (
       <button
         key={`p:${p.id}`}
@@ -576,6 +581,8 @@ function renderFlyoutNodes(nodes: TNode[], depth: number, actions: TreeActions, 
         <span className="ui-tree-leading-icon flex shrink-0 items-center">
           {status ? (
             <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: STATUS_COLORS[status] }} />
+          ) : cliVendor ? (
+            <VendorIcon vendor={cliVendor} size={13} />
           ) : (
             <Terminal size={13} strokeWidth={1.5} />
           )}

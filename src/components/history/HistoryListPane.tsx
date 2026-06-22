@@ -1,13 +1,10 @@
-import { Select } from "@/components/ui/select";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { RefreshCw, Search, Star, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type RefObject } from "react";
-import type { HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
+import { ChevronDown, ChevronRight, Folder, RefreshCw, Search, Star, Terminal, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import type { Group, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { Portal } from "../ui/Portal";
 import { formatTime, makeSessionLabel } from "./historyViewUtils";
-
-const ALL_PROJECTS_SELECT_VALUE = "__all_projects__";
 
 interface SessionGroup {
   label: string;
@@ -30,6 +27,10 @@ type SessionContextMenu = {
   y: number;
 };
 
+type HistoryProjectTreeNode =
+  | { type: "group"; group: Group; children: HistoryProjectTreeNode[] }
+  | { type: "project"; project: Project };
+
 interface HistoryListPaneProps {
   historySidebarWidth: number;
   sidebarRef: RefObject<HTMLElement | null>;
@@ -37,6 +38,7 @@ interface HistoryListPaneProps {
   sourceFilter: HistorySourceFilter;
   projectPathFilter: string | null;
   projects: Project[];
+  groups: Group[];
   globalQuery: string;
   activeSessionKey: string | null;
   loadingSessions: boolean;
@@ -62,11 +64,59 @@ interface HistoryListPaneProps {
   onStartResize: (e: ReactMouseEvent) => void;
 }
 
+const SOURCE_FILTER_OPTIONS: { value: HistorySourceFilter; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "claude", label: "Claude" },
+  { value: "codex", label: "Codex" },
+];
+
 function rowHeight(row: HistoryListRow): number {
   if (row.type === "group" || row.type === "searchHeader" || row.type === "searching") return 32;
   if (row.type === "loading" || row.type === "empty" || row.type === "loadMore") return 56;
   if (row.type === "searchHit") return 72;
   return 96;
+}
+
+function buildHistoryProjectTree(groups: Group[], projects: Project[]): HistoryProjectTreeNode[] {
+  const childGroups = new Map<string | null, Group[]>();
+  const groupProjects = new Map<string | null, Project[]>();
+
+  for (const group of groups) {
+    const list = childGroups.get(group.parent_id) ?? [];
+    list.push(group);
+    childGroups.set(group.parent_id, list);
+  }
+
+  for (const project of projects) {
+    const list = groupProjects.get(project.group_id) ?? [];
+    list.push(project);
+    groupProjects.set(project.group_id, list);
+  }
+
+  const buildLevel = (parentId: string | null): HistoryProjectTreeNode[] => {
+    const nodes: HistoryProjectTreeNode[] = [];
+    const sortedGroups = [...(childGroups.get(parentId) ?? [])].sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+    );
+    const sortedProjects = [...(groupProjects.get(parentId) ?? [])].sort(
+      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
+    );
+
+    for (const group of sortedGroups) {
+      nodes.push({ type: "group", group, children: buildLevel(group.id) });
+    }
+    for (const project of sortedProjects) {
+      nodes.push({ type: "project", project });
+    }
+    return nodes;
+  };
+
+  return buildLevel(null);
+}
+
+function countProjects(node: HistoryProjectTreeNode): number {
+  if (node.type === "project") return 1;
+  return node.children.reduce((sum, child) => sum + countProjects(child), 0);
 }
 
 export function HistoryListPane({
@@ -76,6 +126,7 @@ export function HistoryListPane({
   sourceFilter,
   projectPathFilter,
   projects,
+  groups,
   globalQuery,
   activeSessionKey,
   loadingSessions,
@@ -103,7 +154,38 @@ export function HistoryListPane({
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
+  const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set());
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
+  const projectDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const projectTree = useMemo(() => buildHistoryProjectTree(groups, projects), [groups, projects]);
+  const selectedProjectName = useMemo(
+    () => projects.find((project) => project.path === projectPathFilter)?.name ?? null,
+    [projectPathFilter, projects]
+  );
+  const selectedProjectLabel = useMemo(() => {
+    if (selectedProjectName) return selectedProjectName;
+    if (!projectPathFilter) return "全部项目";
+    return projectPathFilter.split(/[\\/]/).pop() || projectPathFilter;
+  }, [projectPathFilter, selectedProjectName]);
+
+  const toggleFilterGroup = useCallback((groupId: string) => {
+    setCollapsedFilterGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }, []);
+
+  const handleProjectFilterChange = useCallback(
+    (projectPath: string | null) => {
+      onProjectPathFilterChange(projectPath);
+      setProjectMenuOpen(false);
+    },
+    [onProjectPathFilterChange]
+  );
 
   const handleSessionContextMenu = useCallback((e: ReactMouseEvent, session: HistorySessionView) => {
     e.preventDefault();
@@ -137,6 +219,23 @@ export function HistoryListPane({
       window.removeEventListener("keydown", keyHandler);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (projectDropdownRef.current?.contains(e.target as Node)) return;
+      setProjectMenuOpen(false);
+    };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProjectMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    window.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      window.removeEventListener("keydown", keyHandler);
+    };
+  }, [projectMenuOpen]);
 
   const rows = useMemo<HistoryListRow[]>(() => {
     if (loadingSessions) return [{ type: "loading", id: "loading" }];
@@ -179,6 +278,50 @@ export function HistoryListPane({
   const menuX = contextMenu ? Math.max(8, Math.min(contextMenu.x, window.innerWidth - 200)) : 0;
   const menuY = contextMenu ? Math.max(8, Math.min(contextMenu.y, window.innerHeight - 80)) : 0;
 
+  const renderProjectNode = (node: HistoryProjectTreeNode, depth = 0): ReactNode => {
+    const paddingLeft = 8 + depth * 14;
+    if (node.type === "group") {
+      const isOpen = !collapsedFilterGroups.has(node.group.id);
+      return (
+        <div key={`group:${node.group.id}`}>
+          <button
+            type="button"
+            onClick={() => toggleFilterGroup(node.group.id)}
+            className="ui-tree-node ui-tree-group ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[11px] font-semibold"
+            style={{ paddingLeft }}
+            aria-expanded={isOpen}
+          >
+            <ChevronRight size={12} className="shrink-0" style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 150ms" }} />
+            <Folder size={13} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{node.group.name}</span>
+            <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{countProjects(node)}</span>
+          </button>
+          {isOpen && node.children.length > 0 && (
+            <div className="mt-0.5 space-y-0.5">
+              {node.children.map((child) => renderProjectNode(child, depth + 1))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const selected = projectPathFilter === node.project.path;
+    return (
+      <button
+        key={`project:${node.project.id}`}
+        type="button"
+        onClick={() => handleProjectFilterChange(selected ? null : node.project.path)}
+        className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-[12px]"
+        data-selected={selected ? "true" : "false"}
+        style={{ paddingLeft }}
+        title={node.project.path}
+      >
+        <Terminal size={13} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate font-medium">{node.project.name}</span>
+      </button>
+    );
+  };
+
   return (
     <aside
       ref={sidebarRef}
@@ -186,43 +329,35 @@ export function HistoryListPane({
       style={{ width: historySidebarWidth }}
     >
       <div className="ui-history-sidebar-top p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Select
-            className="h-8 shrink-0 text-[12px]"
-            value={sourceFilter}
-            onChange={(e) => onSourceFilterChange(e.target.value as HistorySourceFilter)}
-            aria-label="历史来源过滤"
-          >
-            <option value="all">全部来源</option>
-            <option value="claude">Claude</option>
-            <option value="codex">Codex</option>
-          </Select>
-
-          <Select
-            className="h-8 min-w-[120px] shrink-0 text-[12px]"
-            value={projectPathFilter ?? ALL_PROJECTS_SELECT_VALUE}
-            onChange={(e) => {
-              const nextValue = e.target.value;
-              onProjectPathFilterChange(nextValue === ALL_PROJECTS_SELECT_VALUE ? null : nextValue);
-            }}
-            aria-label="历史项目过滤"
-          >
-            <option value={ALL_PROJECTS_SELECT_VALUE}>全部项目</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.path}>
-                {project.name}
-              </option>
-            ))}
-          </Select>
+        <div className="flex items-center gap-2">
+          <div className="grid min-w-0 flex-1 grid-cols-3 gap-1 rounded-xl border border-border/60 bg-surface-container-lowest p-1">
+            {SOURCE_FILTER_OPTIONS.map((option) => {
+              const active = sourceFilter === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => onSourceFilterChange(option.value)}
+                  className="ui-focus-ring rounded-lg px-1.5 py-1 text-[11px] font-semibold transition-colors"
+                  style={{
+                    backgroundColor: active ? "var(--interactive-selected-bg)" : "transparent",
+                    color: active ? "var(--on-surface)" : "var(--text-muted)",
+                  }}
+                  aria-pressed={active}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
 
           <button
             onClick={onRefresh}
             aria-label="刷新历史会话列表"
-            className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact shrink-0"
+            className="ui-flat-action ui-toolbar-button-compact h-8 w-8 shrink-0 px-0"
             title="刷新会话列表"
           >
             <RefreshCw size={12} />
-            刷新
           </button>
         </div>
 
@@ -236,6 +371,50 @@ export function HistoryListPane({
             placeholder="全局搜索（标题/消息/标签）"
             className="flex-1 bg-transparent text-[12px] outline-none"
           />
+        </div>
+
+        <div ref={projectDropdownRef} className="relative mt-2">
+          <button
+            type="button"
+            onClick={() => setProjectMenuOpen((open) => !open)}
+            className="ui-focus-ring flex h-9 w-full items-center gap-2 rounded-xl border border-border/60 bg-surface-container-lowest px-2.5 text-left text-[12px] transition-colors hover:bg-surface-container-high"
+            aria-haspopup="tree"
+            aria-expanded={projectMenuOpen}
+            title={projectPathFilter ?? "全部项目"}
+          >
+            <Folder size={13} className="shrink-0 text-text-muted" />
+            <span className="min-w-0 flex-1 truncate">
+              <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-text-muted">项目来源</span>
+              <span className="font-semibold text-text-primary">{selectedProjectLabel}</span>
+            </span>
+            <ChevronDown
+              size={13}
+              className="shrink-0 text-text-muted transition-transform"
+              style={{ transform: projectMenuOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+            />
+          </button>
+
+          {projectMenuOpen && (
+            <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-border/70 bg-surface-container-lowest p-1 shadow-lg">
+              <div className="ui-thin-scroll max-h-52 space-y-0.5 overflow-y-auto pr-1" role="tree" aria-label="历史项目过滤树">
+                <button
+                  type="button"
+                  onClick={() => handleProjectFilterChange(null)}
+                  className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg px-2 text-left text-[12px]"
+                  data-selected={!projectPathFilter ? "true" : "false"}
+                >
+                  <Folder size={13} className="shrink-0" />
+                  <span className="min-w-0 flex-1 truncate font-medium">全部项目</span>
+                  <span className="ui-tree-count-badge rounded-full px-1.5 text-[10px] font-medium">{projects.length}</span>
+                </button>
+                {projectTree.length > 0 ? (
+                  projectTree.map((node) => renderProjectNode(node))
+                ) : (
+                  <div className="px-2 py-1.5 text-[11px] text-text-muted">暂无项目</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-1 text-[12px] text-text-muted">{sessionHistoryShortcutHint} 打开全局搜索</div>

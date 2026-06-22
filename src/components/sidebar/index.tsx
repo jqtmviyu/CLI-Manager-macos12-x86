@@ -41,8 +41,8 @@ interface SidebarProps {
 }
 
 const SIDEBAR_COLLAPSED_WIDTH = 64;
-const SIDEBAR_COLLAPSE_THRESHOLD = 150;
-const SIDEBAR_MIN_WIDTH = 180;
+const SIDEBAR_COLLAPSE_THRESHOLD = 140;
+const SIDEBAR_MIN_WIDTH = 168;
 const SIDEBAR_MAX_WIDTH = 500;
 const SIDEBAR_AUTO_COLLAPSE_BREAKPOINT = 900;
 
@@ -52,7 +52,7 @@ function clampExpandedSidebarWidth(width: number): number {
 
 function normalizePersistedSidebarWidth(width: number): number {
   if (width <= SIDEBAR_COLLAPSED_WIDTH) return SIDEBAR_COLLAPSED_WIDTH;
-  return clampExpandedSidebarWidth(width);
+  return clampExpandedSidebarWidth(width === 280 ? 248 : width);
 }
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
@@ -124,7 +124,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
   const autoCollapsedByViewportRef = useRef(false);
   const lastExpandedWidthRef = useRef(
     initialSidebarWidth <= SIDEBAR_COLLAPSED_WIDTH
-      ? 280
+      ? 248
       : clampExpandedSidebarWidth(initialSidebarWidth)
   );
 

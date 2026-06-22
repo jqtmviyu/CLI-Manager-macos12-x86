@@ -18,8 +18,8 @@ interface TerminalSidePanelProps {
 }
 
 const STORAGE_KEY = "cli-manager:terminal-side-panel-width";
-const DEFAULT_WIDTH = 243;
-const MIN_WIDTH = 243;
+const DEFAULT_WIDTH = 220;
+const MIN_WIDTH = 220;
 const MAX_WIDTH = 500;
 
 function clampWidth(width: number): number {
@@ -31,7 +31,8 @@ function readStoredWidth(): number {
   const raw = window.localStorage.getItem(STORAGE_KEY);
   if (!raw) return DEFAULT_WIDTH;
   const parsed = Number.parseInt(raw, 10);
-  return Number.isFinite(parsed) ? clampWidth(parsed) : DEFAULT_WIDTH;
+  if (!Number.isFinite(parsed)) return DEFAULT_WIDTH;
+  return parsed === 243 ? DEFAULT_WIDTH : clampWidth(parsed);
 }
 
 export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPath, onTabChange }: TerminalSidePanelProps) {

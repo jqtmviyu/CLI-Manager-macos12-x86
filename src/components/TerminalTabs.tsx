@@ -1555,7 +1555,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           aria-controls="history-workspace"
           aria-expanded={historyOpen}
         >
-          <ListClockIcon size={20} />
+          <ListClockIcon size={16} />
           {showToolbarText && <span>会话历史</span>}
         </button>
       ),

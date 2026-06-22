@@ -374,7 +374,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
 
   const panelClassName = embedded
     ? "flex h-full min-h-0 flex-col overflow-hidden font-mono"
-    : "relative z-[1] flex w-[196px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
+    : "relative z-[1] flex w-[184px] shrink-0 flex-col overflow-hidden border-l border-border font-mono";
   const Container = embedded ? "div" : "aside";
 
   return (
@@ -502,7 +502,7 @@ export function GitChangesPanel({ open, projectPath, visible = true, embedded = 
 
       {/* Filter */}
       {changes.length > 0 && (
-        <div ref={filterRowRef} className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
+        <div ref={filterRowRef} className="flex shrink-0 justify-center gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
           {filterButtons.map((btn) => {
             const Icon = btn.icon;
             const active = statusFilter === btn.value;

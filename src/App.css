@@ -1782,13 +1782,13 @@ samp,
 }
 
 .ui-icon-action.ui-sidebar-action-stats:hover:not(:disabled) {
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--success) 16%, transparent);
   box-shadow: none;
   color: var(--success);
 }
 
 .ui-icon-action.ui-sidebar-action-settings:hover:not(:disabled) {
-  background-color: transparent;
+  background-color: color-mix(in srgb, var(--primary) 14%, transparent);
   box-shadow: none;
   color: color-mix(in srgb, var(--primary) 78%, #8b5cf6 22%);
 }
@@ -2818,11 +2818,24 @@ samp,
 }
 
 .ui-terminal-action-sidebar {
-  width: 44px;
-  padding: 8px 6px;
+  position: relative;
+  isolation: isolate;
+  width: 38px;
+  padding: 7px 4px;
   border-left: 1px solid color-mix(in srgb, var(--terminal-tab-accent-muted) 24%, transparent);
-  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, #000 14%);
+  background-color: transparent;
   color: var(--terminal-theme-foreground, #f8fafc);
+}
+
+.ui-terminal-action-sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--terminal-tab-accent) 9%, transparent), transparent 46%),
+    color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, #000 14%);
+  z-index: -1;
 }
 
 .ui-terminal-action-sidebar[data-show-text="true"] {
@@ -2841,7 +2854,7 @@ samp,
   border-color: transparent;
   background-color: transparent;
   background-image: none;
-  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 88%, var(--terminal-tab-accent) 12%);
+  color: var(--terminal-action-color, currentColor);
   box-shadow: none;
 }
 
@@ -2870,18 +2883,31 @@ samp,
 .ui-terminal-action-drag-overlay .ui-toolbar-button:hover:not(:disabled),
 .ui-terminal-action-drag-overlay .ui-icon-action:hover:not(:disabled) {
   transform: none;
-  background-color: transparent;
-  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 88%, var(--terminal-tab-accent) 12%);
+  border-color: transparent;
+  background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 12%, transparent);
+  color: var(--terminal-action-color, currentColor);
 }
 
 .ui-terminal-action-sidebar .ui-primary-action,
 .ui-terminal-action-sidebar .ui-icon-action[data-active="true"],
 .ui-terminal-action-drag-overlay .ui-primary-action,
 .ui-terminal-action-drag-overlay .ui-icon-action[data-active="true"] {
+  border-color: transparent;
   background-color: transparent;
   background-image: none;
-  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 88%, var(--terminal-tab-accent) 12%);
+  color: var(--terminal-action-color, currentColor);
+}
+
+.ui-terminal-action-sidebar .ui-action-new.ui-primary-action,
+.ui-terminal-action-drag-overlay .ui-action-new.ui-primary-action {
   border-color: transparent;
+  background-color: transparent;
+  color: var(--terminal-action-color, currentColor);
+}
+
+.ui-terminal-action-sidebar .ui-action-new.ui-primary-action svg,
+.ui-terminal-action-drag-overlay .ui-action-new.ui-primary-action svg {
+  color: var(--terminal-action-color, currentColor);
 }
 
 .ui-action-new {

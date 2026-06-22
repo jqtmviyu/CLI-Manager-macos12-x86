@@ -8,18 +8,23 @@ import { PromptLibrary } from "./prompts/PromptLibrary";
 import { DiffModal } from "./history/DiffModal";
 import { HistoryListPane } from "./history/HistoryListPane";
 import { SessionDetailPane } from "./history/SessionDetailPane";
-import { SessionStatsPanel } from "./history/SessionStatsPanel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { toGroupLabel, type TimeGroupLabel } from "./history/historyViewUtils";
 
 const SESSION_PAGE_SIZE = 100;
 const MESSAGE_PAGE_SIZE = 160;
 const LOAD_MORE_THRESHOLD_PX = 220;
+const HISTORY_SIDEBAR_DEFAULT_WIDTH = 276;
+const HISTORY_SIDEBAR_OLD_DEFAULT_WIDTH = 300;
 // 稳定的空数组引用：避免每次 render 都用 `?? []` 生成新数组、击穿下游 memo。
 const EMPTY_MESSAGES: HistoryMessage[] = [];
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeHistorySidebarWidth(width: number): number {
+  return width === HISTORY_SIDEBAR_OLD_DEFAULT_WIDTH ? HISTORY_SIDEBAR_DEFAULT_WIDTH : width;
 }
 
 interface HistoryWorkspaceProps {
@@ -58,9 +63,11 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const openSessionAtMessage = useHistoryStore((s) => s.openSessionAtMessage);
   const clearFocusedMessage = useHistoryStore((s) => s.clearFocusedMessage);
   const updateMeta = useHistoryStore((s) => s.updateMeta);
-  const historySidebarWidth = useSettingsStore((s) => s.historySidebarWidth);
+  const storedHistorySidebarWidth = useSettingsStore((s) => s.historySidebarWidth);
+  const historySidebarWidth = normalizeHistorySidebarWidth(storedHistorySidebarWidth);
   const updateSetting = useSettingsStore((s) => s.update);
   const projects = useProjectStore((s) => s.projects);
+  const groups = useProjectStore((s) => s.groups);
 
   const globalSearchRef = useRef<HTMLInputElement | null>(null);
   const sessionSearchRef = useRef<HTMLInputElement | null>(null);
@@ -83,7 +90,6 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
   const [visibleMessageCount, setVisibleMessageCount] = useState(MESSAGE_PAGE_SIZE);
   const [debouncedSessionQuery, setDebouncedSessionQuery] = useState(sessionQuery);
   const [deleteTarget, setDeleteTarget] = useState<HistorySessionView | null>(null);
-  const [statsPanelOpen, setStatsPanelOpen] = useState(false);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSessionQuery(sessionQuery), 150);
@@ -430,6 +436,7 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
           sourceFilter={sourceFilter}
           projectPathFilter={projectPathFilter}
           projects={projects}
+          groups={groups}
           globalQuery={globalQuery}
           activeSessionKey={activeSessionKey}
           loadingSessions={loadingSessions}
@@ -486,7 +493,6 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             messageListRef={messageListRef}
             sessionSearchRef={sessionSearchRef}
             messageRefs={messageRefs}
-            statsPanelOpen={statsPanelOpen}
             onMessageListScroll={handleMessageListScroll}
             onAliasDraftChange={setAliasDraft}
             onTagsDraftChange={setTagsDraft}
@@ -504,15 +510,8 @@ export function HistoryWorkspace({ active = true }: HistoryWorkspaceProps) {
             onLoadMoreMessages={() =>
               setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE))
             }
-            onToggleStatsPanel={() => setStatsPanelOpen((prev) => !prev)}
           />
         </div>
-
-        <SessionStatsPanel
-          activeView={activeView}
-          activeSession={activeSession}
-          open={statsPanelOpen}
-        />
 
         <PromptLibrary
           open={promptOpen}
