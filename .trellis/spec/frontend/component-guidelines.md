@@ -122,6 +122,59 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 **Tests**: For terminal drag UI changes, run `npx tsc --noEmit` and manually verify same-pane reorder, pane-center move, and left/right/top/bottom edge split previews in the Tauri desktop app.
 
+### Convention: Terminal split layout uses flat absolute positioning to preserve component identity
+
+**What**: `SplitTerminalView` renders pane leaves and dividers using flat absolute positioning with computed geometry rather than nested flexbox recursion. All pane leaves are direct children keyed by `pane.id` under a single parent container.
+
+**Why**: When a pane leaf is split using nested rendering, the original leaf moves to a new React parent path (wrapped by the new split node), causing `PaneLeafView` and its child `XTermTerminal` to remount. This remount destroys the xterm.js instance's in-memory scrollback buffer, making terminal history disappear after manual split or sub-agent hook auto-split.
+
+**Implementation**:
+
+```typescript
+interface Rect { left: number; top: number; width: number; height: number; }
+interface LeafLayout { leaf: TerminalPaneLeaf; rect: Rect; }
+interface DividerLayout { split: TerminalPaneSplit; rect: Rect; splitRect: Rect; }
+
+function buildSplitLayout(node: TerminalPaneNode, rect: Rect): { leaves: LeafLayout[]; dividers: DividerLayout[] } {
+  if (node.type === "leaf") return { leaves: [{ leaf: node, rect }], dividers: [] };
+  
+  // Compute first/second pane rects and divider rect from split ratio + DIVIDER_SIZE
+  const firstLayout = buildSplitLayout(node.first, firstRect);
+  const secondLayout = buildSplitLayout(node.second, secondRect);
+  
+  return {
+    leaves: [...firstLayout.leaves, ...secondLayout.leaves],
+    dividers: [{ split: node, rect: dividerRect, splitRect: rect }, ...firstLayout.dividers, ...secondLayout.dividers],
+  };
+}
+
+// Render all leaves as stable keyed children; split/unsplit only changes style.left/top/width/height
+<div className="relative h-full w-full overflow-hidden">
+  {layout.leaves.map(({ leaf, rect }) => (
+    <div key={leaf.id} className="absolute overflow-hidden" style={rectStyle(rect)}>
+      {renderLeaf(leaf)}
+    </div>
+  ))}
+  {layout.dividers.map(({ split, rect }) => (
+    <div key={split.id} onMouseDown={(e) => handleDragStart(split, e)} style={rectStyle(rect)} />
+  ))}
+</div>
+```
+
+**Contracts**:
+
+- `buildSplitLayout` recursively walks the split tree and computes absolute rectangles for every leaf and divider. Geometry uses same 4px `DIVIDER_SIZE` and `split.ratio` as prior nested flexbox layout for visual equivalence.
+- Divider drag calculates ratio relative to the split's own computed rectangle (`splitRect`), not the root container, so nested split drags work correctly.
+- `PaneLeafView` keeps `key={pane.id}` stable; when a leaf is split, only its `style` props change — React preserves the original component instance.
+- ResizeObserver on the container recalculates layout when window/pane size changes; `useMemo` avoids redundant geometry computation.
+
+**Tests**: For changes affecting split rendering, run `npx tsc --noEmit` and manually verify in the desktop app:
+
+- [ ] After outputting terminal history, manually split the terminal; original pane history remains visible and scrollable.
+- [ ] Sub-agent hook auto-split creates transcript pane; parent terminal history remains visible.
+- [ ] Divider drag resizing still works; nested splits resize correctly.
+- [ ] Pane tab switching and session activation unchanged.
+
 ### Convention: Git tree compresses consecutive single-child directory chains at render time
 
 **What**: In `GitTreeNodeComponent`, when rendering a directory node, walk consecutive single-child directory chains and compress them into a single display row showing the top directory name plus a weakened path suffix (JetBrains style).
