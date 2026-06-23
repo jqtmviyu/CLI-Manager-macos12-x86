@@ -48,6 +48,7 @@ export type TabSwitchShortcutModifier = "Alt" | "Ctrl" | "Shift";
 export type KeyboardShortcutMap = Record<ShortcutAction, string>;
 export type TerminalNewlineShortcut = "Shift+Enter" | "Ctrl+Enter" | "Alt+Enter";
 export type UnsplitBehavior = "merge" | "close";
+export type BatchLaunchPaneDirection = "vertical" | "horizontal";
 
 export type HookEventType =
   | "SessionStart"
@@ -180,6 +181,8 @@ interface Settings {
   confirmBeforeClosingTerminalTab: boolean;
   /** 批量启动分组时，同一分组终端放在同一个 pane 中（多 tab），不同分组创建在不同 pane。默认关闭。 */
   batchLaunchGroupInPane: boolean;
+  /** 批量启动分屏方向：vertical（上下分屏） / horizontal（左右分屏）。默认 horizontal。 */
+  batchLaunchPaneDirection: BatchLaunchPaneDirection;
 }
 
 interface SettingsStore extends Settings {
@@ -265,6 +268,7 @@ const DEFAULTS: Settings = {
   gitGroupBy: "directory",
   confirmBeforeClosingTerminalTab: false,
   batchLaunchGroupInPane: false,
+  batchLaunchPaneDirection: "horizontal",
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -595,6 +599,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.batchLaunchGroupInPane === "boolean"
         ? entries.batchLaunchGroupInPane
         : DEFAULTS.batchLaunchGroupInPane;
+    entries.batchLaunchPaneDirection =
+      entries.batchLaunchPaneDirection === "vertical" || entries.batchLaunchPaneDirection === "horizontal"
+        ? entries.batchLaunchPaneDirection
+        : DEFAULTS.batchLaunchPaneDirection;
 
     // 检测背景图是否仍存在；若不存在，仅在内存中清空 imagePath，保留 settings.json
     // 中的原配置，便于后续提示用户「之前选的图丢了」。

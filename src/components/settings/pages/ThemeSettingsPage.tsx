@@ -32,6 +32,7 @@ import {
   TERMINAL_SCROLLBACK_ROWS_MAX,
   TERMINAL_SCROLLBACK_ROWS_MIN,
   useSettingsStore,
+  type BatchLaunchPaneDirection,
   type UnsplitBehavior,
 } from "../../../stores/settingsStore";
 import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
@@ -85,6 +86,7 @@ export function ThemeSettingsPage() {
   const unsplitBehavior = useSettingsStore((s) => s.unsplitBehavior);
   const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
   const batchLaunchGroupInPane = useSettingsStore((s) => s.batchLaunchGroupInPane);
+  const batchLaunchPaneDirection = useSettingsStore((s) => s.batchLaunchPaneDirection);
   const setTerminalThemeMode = useSettingsStore((s) => s.setTerminalThemeMode);
   const update = useSettingsStore((s) => s.update);
   const [query, setQuery] = useState("");
@@ -455,6 +457,24 @@ export function ThemeSettingsPage() {
                   aria-label={batchLaunchGroupInPane ? "关闭批量启动分组 Pane" : "开启批量启动分组 Pane"}
                 />
               </Group>
+              {batchLaunchGroupInPane && (
+                <Group mt="sm" justify="space-between" align="center">
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    分屏方向
+                  </Text>
+                  <SegmentedControl<BatchLaunchPaneDirection>
+                    value={batchLaunchPaneDirection}
+                    onChange={(value) => void update("batchLaunchPaneDirection", value)}
+                    data={[
+                      { value: "vertical", label: "上下" },
+                      { value: "horizontal", label: "左右" },
+                    ]}
+                    color="cliPrimary"
+                    size="xs"
+                    aria-label="批量启动分屏方向"
+                  />
+                </Group>
+              )}
             </Card>
           </Stack>
         </section>
