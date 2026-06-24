@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { Badge, Box, Button, Card, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
-import { Play, Settings, AlertTriangle, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X } from "lucide-react";
+import { ActionIcon, Badge, Box, Button, Card, Group, SimpleGrid, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Copy, Check, X, Activity, Bell, ShieldAlert, ToggleRight, AlertTriangle, BellOff, XCircle, Layers } from "lucide-react";
 import { useSettingsStore, type HookEventType } from "@/stores/settingsStore";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed";
@@ -20,6 +20,7 @@ interface ToolHookSettingsStatus {
   attentionHookInstalled: boolean;
   stopHookInstalled: boolean;
   failureHookInstalled: boolean;
+  subagentStartHookInstalled: boolean;
   hooksFeatureInstalled: boolean;
 }
 
@@ -42,42 +43,6 @@ const STATUS_COLORS: Record<HookInstallStatus, string> = {
   installed: "green",
 };
 
-const SYSTEM_NOTIFICATION_EVENT_OPTIONS: readonly {
-  event: HookEventType;
-  title: string;
-  description: string;
-}[] = [
-  {
-    event: "Stop",
-    title: "任务完成",
-    description: "Claude Code 或 Codex CLI 任务正常结束时发送系统通知。",
-  },
-  {
-    event: "StopFailure",
-    title: "执行失败",
-    description: "Hook 上报异常退出或失败状态时发送系统通知。",
-  },
-  {
-    event: "PermissionRequest",
-    title: "需要审批",
-    description: "CLI 请求权限审批、需要你回到终端处理时发送系统通知。",
-  },
-  {
-    event: "Notification",
-    title: "提醒",
-    description: "CLI 主动上报提醒消息时发送系统通知。",
-  },
-  {
-    event: "SessionStart",
-    title: "会话启动",
-    description: "新会话绑定到 CLI-Manager 标签页时发送系统通知。",
-  },
-  {
-    event: "UserPromptSubmit",
-    title: "命令提交",
-    description: "用户提示词提交并进入运行流程时发送系统通知。",
-  },
-];
 
 function formatPath(value: string | null): string {
   return value && value.trim() ? value : "未选择";
@@ -156,9 +121,12 @@ interface HookCardProps {
   icon: React.ReactNode;
   label: string;
   checked: boolean;
+  notifyEnabled?: boolean;
+  onToggleNotify?: () => void;
+  notifyDisabled?: boolean;
 }
 
-function HookCard({ icon, label, checked }: HookCardProps) {
+function HookCard({ icon, label, checked, notifyEnabled, onToggleNotify, notifyDisabled }: HookCardProps) {
   return (
     <Card
       className="border transition-colors"
@@ -169,26 +137,42 @@ function HookCard({ icon, label, checked }: HookCardProps) {
         backgroundColor: checked ? "var(--success-container)" : "var(--surface-container-low)",
       }}
     >
-      <Stack gap="xs" align="center">
+      <Stack gap={8} align="center">
         <Box
           style={{
             color: checked ? "var(--success)" : "var(--text-muted)",
-            fontSize: 32,
+            fontSize: 26,
+            lineHeight: 1,
           }}
         >
           {icon}
         </Box>
-        <Text size="xs" fw={500} c={checked ? "var(--on-success-container)" : "var(--on-surface-variant)"} ta="center" lh={1.4}>
+        <Text size="xs" fw={500} c={checked ? "var(--on-success-container)" : "var(--on-surface-variant)"} ta="center" lh={1.3}>
           {label}
         </Text>
-        <Badge
-          variant="filled"
-          color={checked ? "green" : "gray"}
-          radius="xl"
-          size="xs"
-        >
-          {checked ? "已安装" : "未安装"}
-        </Badge>
+        <Group gap={4} align="center" wrap="nowrap">
+          <Badge
+            variant="filled"
+            color={checked ? "green" : "gray"}
+            radius="xl"
+            size="xs"
+          >
+            {checked ? "已安装" : "未安装"}
+          </Badge>
+          {onToggleNotify && (
+            <ActionIcon
+              variant={notifyEnabled ? "light" : "subtle"}
+              color={notifyEnabled ? "blue" : "gray"}
+              size="sm"
+              radius="xl"
+              onClick={(e) => { e.stopPropagation(); onToggleNotify(); }}
+              disabled={notifyDisabled}
+              aria-label={`${label} 系统通知`}
+            >
+              {notifyEnabled ? <Bell size={12} /> : <BellOff size={12} />}
+            </ActionIcon>
+          )}
+        </Group>
       </Stack>
     </Card>
   );
@@ -207,23 +191,53 @@ function SettingsSwitchRow({
   description,
   checked,
   onCheckedChange,
+  icon: Icon,
+  tools,
 }: {
   title: string;
   description: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
+  icon?: React.ComponentType<{ size?: number }>;
+  tools?: ("claude" | "codex")[];
 }) {
   return (
     <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
       <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-        <Box>
-          <Text size="sm" fw={500} c="var(--on-surface)">
-            {title}
-          </Text>
-          <Text mt={4} size="xs" c="var(--text-muted)">
-            {description}
-          </Text>
-        </Box>
+        <Group gap="sm" wrap="nowrap" className="min-w-0">
+          {Icon && (
+            <Box
+              style={{
+                color: checked ? "var(--primary)" : "var(--text-muted)",
+                marginTop: 2,
+                flexShrink: 0,
+              }}
+            >
+              <Icon size={18} />
+            </Box>
+          )}
+          <Box className="min-w-0">
+            <Group gap="xs" align="center" wrap="wrap">
+              <Text size="sm" fw={500} c="var(--on-surface)" className="whitespace-nowrap">
+                {title}
+              </Text>
+              {tools?.map((tool) => (
+                <Badge
+                  key={tool}
+                  variant="light"
+                  size="xs"
+                  color={tool === "claude" ? "orange" : "blue"}
+                  style={{ textTransform: "none" }}
+                >
+                  {tool === "claude" ? "Claude" : "Codex"}
+                </Badge>
+              ))}
+            </Group>
+            <Text mt={4} size="xs" c="var(--text-muted)">
+              {description}
+            </Text>
+          </Box>
+        </Group>
         <Switch
           color="cliPrimary"
           className="shrink-0"
@@ -418,11 +432,26 @@ export function HookSettingsPage() {
   const claudeSessionStartInstalled = Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled);
   const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
   const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
-  const claudeFinishedInstalled = Boolean(claude?.finishedScriptInstalled && claude.stopHookInstalled && claude.failureHookInstalled);
+  // Claude — 拆分为独立事件
+  const claudeStopInstalled = Boolean(claude?.finishedScriptInstalled && claude.stopHookInstalled);
+  const claudeFailureInstalled = Boolean(claude?.finishedScriptInstalled && claude.failureHookInstalled);
+  const claudeSubagentInstalled = Boolean(claude?.subagentStartHookInstalled);
   const codexSessionStartInstalled = Boolean(codex?.attentionScriptInstalled && codex.sessionStartHookInstalled);
   const codexRunningInstalled = Boolean(codex?.attentionScriptInstalled && codex.runningHookInstalled);
   const codexAttentionInstalled = Boolean(codex?.attentionScriptInstalled && codex.attentionHookInstalled);
-  const codexFinishedInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
+  // Codex — 拆分为独立事件
+  const codexStopInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
+  const codexSubagentInstalled = Boolean(codex?.subagentStartHookInstalled);
+
+  // 切换一组 HookEventType 的系统通知状态
+  const toggleNotifyEvents = (events: HookEventType[], enabled: boolean) => {
+    const update = { ...systemNotificationEvents };
+    for (const event of events) {
+      update[event] = enabled;
+    }
+    void updateSetting("systemNotificationEvents", update);
+  };
+  const notifyState = (events: HookEventType[]) => events.every((e) => systemNotificationEvents[e]);
 
   return (
     <Stack gap="md">
@@ -486,40 +515,30 @@ export function HookSettingsPage() {
         </Stack>
       </section>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <Stack gap="md">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              系统通知
-            </Text>
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              并行发送系统原生通知，应用内通知弹框和标签小圆点仍按各自开关独立工作；首次发送时操作系统可能会请求授权。
-            </Text>
-          </Box>
-          <SettingsSwitchRow
-            title="启用系统通知"
-            description="开启后，CLI-Manager 会根据下方事件开关发送 Windows、macOS、Linux 或 WSL 主机通知。"
+      <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
+        <Group justify="space-between" align="center" gap="md">
+          <Group gap="sm">
+            <Bell
+              size={16}
+              style={{ color: systemNotificationsEnabled ? "var(--primary)" : "var(--text-muted)" }}
+            />
+            <Box>
+              <Text size="sm" fw={500} c="var(--on-surface)">
+                系统通知
+              </Text>
+              <Text size="xs" c="var(--on-surface-variant)">
+                每个 Hook 卡片下方可独立开关对应事件的系统通知（灰色铃铛=关闭，蓝色铃铛=开启）
+              </Text>
+            </Box>
+          </Group>
+          <Switch
+            color="cliPrimary"
             checked={systemNotificationsEnabled}
-            onCheckedChange={(checked) => void updateSetting("systemNotificationsEnabled", checked)}
+            onChange={(event) => void updateSetting("systemNotificationsEnabled", event.currentTarget.checked)}
+            aria-label="启用系统通知"
           />
-          <Stack gap="xs">
-            {SYSTEM_NOTIFICATION_EVENT_OPTIONS.map((option) => (
-              <SettingsSwitchRow
-                key={option.event}
-                title={option.title}
-                description={option.description}
-                checked={systemNotificationEvents[option.event]}
-                onCheckedChange={(checked) => {
-                  void updateSetting("systemNotificationEvents", {
-                    ...useSettingsStore.getState().systemNotificationEvents,
-                    [option.event]: checked,
-                  });
-                }}
-              />
-            ))}
-          </Stack>
-        </Stack>
-      </section>
+        </Group>
+      </Card>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="lg">
@@ -535,26 +554,51 @@ export function HookSettingsPage() {
             <StatusPill status={claudeStatus} />
           </Group>
 
-          <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
             <HookCard
               icon={<Play />}
               label="会话启动"
               checked={claudeSessionStartInstalled}
+              notifyEnabled={notifyState(["SessionStart"])}
+              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
-              icon={<Settings />}
+              icon={<Activity />}
               label="运行中"
               checked={claudeRunningInstalled}
+              notifyEnabled={notifyState(["UserPromptSubmit"])}
+              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
-              icon={<AlertTriangle />}
+              icon={<Bell />}
               label="待审批"
               checked={claudeAttentionInstalled}
+              notifyEnabled={notifyState(["Notification"])}
+              onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
               icon={<CheckCircle />}
-              label="完成/异常"
-              checked={claudeFinishedInstalled}
+              label="任务完成"
+              checked={claudeStopInstalled}
+              notifyEnabled={notifyState(["Stop"])}
+              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
+              notifyDisabled={!systemNotificationsEnabled}
+            />
+            <HookCard
+              icon={<XCircle size={26} />}
+              label="执行失败"
+              checked={claudeFailureInstalled}
+              notifyEnabled={notifyState(["StopFailure"])}
+              onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
+              notifyDisabled={!systemNotificationsEnabled}
+            />
+            <HookCard
+              icon={<Layers size={26} />}
+              label="子 Agent"
+              checked={claudeSubagentInstalled}
             />
           </SimpleGrid>
 
@@ -684,29 +728,46 @@ export function HookSettingsPage() {
             <StatusPill status={codexStatus} />
           </Group>
 
-          <SimpleGrid cols={{ base: 2, sm: 5 }} spacing="md">
+          <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
             <HookCard
               icon={<Play />}
               label="会话启动"
               checked={codexSessionStartInstalled}
+              notifyEnabled={notifyState(["SessionStart"])}
+              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
-              icon={<Settings />}
+              icon={<Activity />}
               label="运行中"
               checked={codexRunningInstalled}
+              notifyEnabled={notifyState(["UserPromptSubmit"])}
+              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
-              icon={<AlertTriangle />}
-              label="待审批"
+              icon={<ShieldAlert />}
+              label="需要审批"
               checked={codexAttentionInstalled}
+              notifyEnabled={notifyState(["PermissionRequest"])}
+              onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
               icon={<CheckCircle />}
               label="完成"
-              checked={codexFinishedInstalled}
+              checked={codexStopInstalled}
+              notifyEnabled={notifyState(["Stop"])}
+              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
+              notifyDisabled={!systemNotificationsEnabled}
             />
             <HookCard
-              icon={<Settings />}
+              icon={<Layers size={26} />}
+              label="子 Agent"
+              checked={codexSubagentInstalled}
+            />
+            <HookCard
+              icon={<ToggleRight />}
               label="Hooks 功能"
               checked={Boolean(codex?.hooksFeatureInstalled)}
             />
