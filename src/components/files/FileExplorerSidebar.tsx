@@ -677,6 +677,13 @@ export function FileExplorerSidebar() {
       return;
     }
 
+    if (event.key === "Delete" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      setConfirmAction({ kind: "delete", path: entry.path, name: entry.name });
+      return;
+    }
+
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x" && key !== "v") return;

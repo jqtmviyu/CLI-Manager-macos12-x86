@@ -605,18 +605,22 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
     };
 
+    const hasTerminalFileDragData = (dataTransfer: DataTransfer | null) => (
+      Boolean(getTerminalFileDragText()) || Boolean(dataTransfer?.types.includes(TERMINAL_FILE_PATH_MIME))
+    );
+
     const onDragOver = (e: DragEvent) => {
-      if (!isPointInsidePasteTarget(e.clientX, e.clientY)) return;
+      const isActiveTerminalFileDrag = Boolean(getTerminalFileDragText());
+      if (!isActiveTerminalFileDrag && (!isPointInsidePasteTarget(e.clientX, e.clientY) || !hasTerminalFileDragData(e.dataTransfer))) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     };
     const onDrop = (e: DragEvent) => {
+      if (!isPointInsidePasteTarget(e.clientX, e.clientY) || !hasTerminalFileDragData(e.dataTransfer)) return;
       const text = getTerminalFileDragText()
         || e.dataTransfer?.getData(TERMINAL_FILE_PATH_MIME)
-        || e.dataTransfer?.getData("text/plain")
         || "";
-      if (!isPointInsidePasteTarget(e.clientX, e.clientY)) return;
       e.preventDefault();
       e.stopPropagation();
       if (!text) return;
