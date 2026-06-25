@@ -1,4 +1,15 @@
-import { Coins, Cpu, Database, Layers3, MessageSquare, TrendingUp } from "lucide-react";
+import { Coins, Cpu, Database, Layers3, TrendingUp } from "lucide-react";
+import {
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { HistorySessionDetail } from "../../lib/types";
 import { useI18n } from "../../lib/i18n";
 import {
@@ -8,11 +19,24 @@ import {
   formatCost,
   ProgressBar,
   SegmentedBar,
-  Sparkline,
   TERM,
-  type SparkPoint,
 } from "../stats/termStatsUi";
 import { getContextLimit } from "../../lib/modelPricing";
+import { HISTORY_TREND_COLORS, PEAK, RECHARTS_AXIS_CURSOR } from "../stats/statsPalette";
+
+const RECHARTS_TOOLTIP_STYLE = {
+  backgroundColor: "var(--bg-secondary)",
+  border: "1px solid var(--border)",
+  borderRadius: 12,
+  boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
+  color: "var(--text-primary)",
+  fontSize: 12,
+} as const;
+
+const RECHARTS_AXIS_STYLE = {
+  fill: "var(--text-muted)",
+  fontSize: 11,
+} as const;
 
 interface SessionContextViewProps {
   session: HistorySessionDetail | null;
@@ -25,23 +49,25 @@ export function SessionContextView({ session }: SessionContextViewProps) {
   const lastContextTokens = session?.usage?.last_context_tokens ?? null;
   const usageRatio = contextLimit && lastContextTokens !== null ? lastContextTokens / contextLimit : null;
   const trend = session?.usage?.token_trend ?? [];
-  const trendPoints: SparkPoint[] = trend
+  const trendPoints = trend
     .map((point) => ({
-      total: point.total_tokens,
-      input: point.input_tokens,
-      output: point.output_tokens,
-      cacheRead: point.cache_read_tokens,
-      cacheCreation: point.cache_creation_tokens,
+      totalTokens: point.total_tokens,
+      inputTokens: point.input_tokens,
+      outputTokens: point.output_tokens,
+      cacheReadTokens: point.cache_read_tokens,
+      cacheCreationTokens: point.cache_creation_tokens,
     }))
-    .filter((point) => point.total > 0);
-  const trendValues = trendPoints.map((point) => point.total);
-  const inputTrend = trendPoints.map((point) => point.input ?? 0);
-  const outputTrend = trendPoints.map((point) => point.output ?? 0);
-  const cacheTrend = trendPoints.map((point) => (point.cacheRead ?? 0) + (point.cacheCreation ?? 0));
+    .filter((point) => point.totalTokens > 0);
+  const trendChartData = trendPoints.map((point, index) => ({
+    ...point,
+    label: `#${index + 1}`,
+  }));
+  const trendValues = trendPoints.map((point) => point.totalTokens);
   const peakTokens = trendValues.length > 0 ? Math.max(...trendValues) : 0;
   const averageTokens = trendValues.length > 0 ? trendValues.reduce((sum, value) => sum + value, 0) / trendValues.length : 0;
   const remaining = contextLimit && lastContextTokens !== null ? Math.max(0, contextLimit - lastContextTokens) : null;
   const contextColor = usageRatio === null ? TERM.dim : usageRatio >= 0.8 ? TERM.red : usageRatio >= 0.5 ? TERM.yellow : TERM.green;
+  const trendChartLabel = `${t("history.context.requestTokenTrend")} · ${t("history.context.ioCacheTrend")}`;
 
   if (!session) return <div className="ui-session-process-empty">{t("history.context.selectSession")}</div>;
 
@@ -124,34 +150,42 @@ export function SessionContextView({ session }: SessionContextViewProps) {
       <section className="ui-session-process-card wide">
         <div className="ui-session-process-card-title">
           <TrendingUp size={14} />
-          {t("history.context.requestTokenTrend")}
+          {trendChartLabel}
         </div>
-        {trendValues.length >= 2 ? (
-          <Sparkline points={trendValues} details={trendPoints} color={TERM.cyan} height={86} />
+        {trendChartData.length >= 2 ? (
+          <div className="h-[240px] min-w-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={trendChartData} margin={{ top: 10, right: 8, bottom: 4, left: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeOpacity={0.42} vertical={false} />
+                <XAxis dataKey="label" tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                <YAxis tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={false} tickFormatter={(value) => formatCompactCount(Number(value))} allowDecimals={false} width={48} />
+                <Tooltip
+                  cursor={RECHARTS_AXIS_CURSOR}
+                  contentStyle={RECHARTS_TOOLTIP_STYLE}
+                  formatter={(value, name) => [`${formatCompactCount(Number(value))} Token`, String(name)]}
+                />
+                <Legend wrapperStyle={{ color: "var(--text-secondary)", fontSize: 11 }} />
+                <Area
+                  type="monotone"
+                  dataKey="totalTokens"
+                  name={t("termStats.total")}
+                  stroke={HISTORY_TREND_COLORS.total}
+                  fill={HISTORY_TREND_COLORS.total}
+                  fillOpacity={0.14}
+                  strokeWidth={2.4}
+                  dot={{ r: 2.3 }}
+                  activeDot={{ r: 5, fill: PEAK }}
+                />
+                <Line type="monotone" dataKey="inputTokens" name={t("termStats.input")} stroke={HISTORY_TREND_COLORS.input} strokeWidth={1.8} dot={false} />
+                <Line type="monotone" dataKey="outputTokens" name={t("termStats.output")} stroke={HISTORY_TREND_COLORS.output} strokeWidth={1.8} dot={false} />
+                <Line type="monotone" dataKey="cacheReadTokens" name={t("termStats.cacheHit")} stroke={HISTORY_TREND_COLORS.cacheRead} strokeWidth={1.8} dot={false} />
+                <Line type="monotone" dataKey="cacheCreationTokens" name={t("termStats.cacheWrite")} stroke={HISTORY_TREND_COLORS.cacheCreation} strokeWidth={1.8} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         ) : (
           <div className="ui-session-process-empty compact">{t("history.context.noTrendPoints")}</div>
         )}
-      </section>
-
-      <section className="ui-session-process-card wide">
-        <div className="ui-session-process-card-title">
-          <MessageSquare size={14} />
-          {t("history.context.ioCacheTrend")}
-        </div>
-        <div className="ui-session-context-mini-charts">
-          <div>
-            <span>{t("termStats.input")}</span>
-            <Sparkline points={inputTrend} color={TERM.green} height={44} />
-          </div>
-          <div>
-            <span>{t("termStats.output")}</span>
-            <Sparkline points={outputTrend} color={TERM.yellow} height={44} />
-          </div>
-          <div>
-            <span>{t("history.context.cache")}</span>
-            <Sparkline points={cacheTrend} color={TERM.blue} height={44} />
-          </div>
-        </div>
       </section>
 
       <section className="ui-session-process-card wide">
