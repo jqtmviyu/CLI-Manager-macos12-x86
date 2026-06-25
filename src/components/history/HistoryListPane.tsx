@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronDown, ChevronRight, Folder, RefreshCw, Search, Star, Terminal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
+import { useI18n } from "../../lib/i18n";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { VendorIcon, inferVendor } from "../VendorIcon";
 import { Portal } from "../ui/Portal";
@@ -18,7 +19,14 @@ type HistoryListRow =
   | { type: "searchHeader"; id: string; count: number }
   | { type: "searchHit"; id: string; hit: HistorySearchHit }
   | { type: "group"; id: string; label: string }
-  | { type: "session"; id: string; item: HistorySessionView }
+  | {
+      type: "session";
+      id: string;
+      item: HistorySessionView;
+      depth: number;
+      childCount: number;
+      parentSessionId: string | null;
+    }
   | { type: "empty"; id: string }
   | { type: "loadMore"; id: string };
 
@@ -77,7 +85,77 @@ function rowHeight(row: HistoryListRow): number {
   if (row.type === "empty") return 88;
   if (row.type === "loading" || row.type === "loadMore") return 56;
   if (row.type === "searchHit") return 72;
-  return 96;
+  return row.depth > 0 ? 104 : 96;
+}
+
+function sessionRelationKey(source: string, projectKey: string, sessionId: string): string {
+  return `${source}:${projectKey}:${sessionId}`;
+}
+
+function inferSubagentParentSessionId(session: HistorySessionView): string | null {
+  const parts = session.file_path.replace(/\\/g, "/").split("/").filter(Boolean);
+  const subagentsIndex = parts.findIndex((part) => part.toLowerCase() === "subagents");
+  if (subagentsIndex <= 0) return null;
+
+  const fileName = parts[subagentsIndex + 1] ?? "";
+  if (!/^agent-[^/]+\.jsonl$/i.test(fileName)) return null;
+
+  const parentSessionId = parts[subagentsIndex - 1] ?? "";
+  if (!parentSessionId || parentSessionId === session.session_id) return null;
+  return parentSessionId;
+}
+
+function buildSessionTreeRows(items: HistorySessionView[], collapsedParentKeys: Set<string>): HistoryListRow[] {
+  const bySessionId = new Map<string, HistorySessionView>();
+  const childrenByParentKey = new Map<string, HistorySessionView[]>();
+  const childKeys = new Set<string>();
+
+  for (const item of items) {
+    bySessionId.set(sessionRelationKey(item.source, item.project_key, item.session_id), item);
+  }
+
+  for (const item of items) {
+    const parentSessionId = inferSubagentParentSessionId(item);
+    if (!parentSessionId) continue;
+
+    const parentKey = sessionRelationKey(item.source, item.project_key, parentSessionId);
+    const parent = bySessionId.get(parentKey);
+    if (!parent) continue;
+
+    const children = childrenByParentKey.get(parent.sessionKey) ?? [];
+    children.push(item);
+    childrenByParentKey.set(parent.sessionKey, children);
+    childKeys.add(item.sessionKey);
+  }
+
+  const rows: HistoryListRow[] = [];
+  for (const item of items) {
+    if (childKeys.has(item.sessionKey)) continue;
+
+    const children = childrenByParentKey.get(item.sessionKey) ?? [];
+    rows.push({
+      type: "session",
+      id: `session:${item.sessionKey}`,
+      item,
+      depth: 0,
+      childCount: children.length,
+      parentSessionId: null,
+    });
+
+    if (children.length === 0 || collapsedParentKeys.has(item.sessionKey)) continue;
+
+    for (const child of children) {
+      rows.push({
+        type: "session",
+        id: `session:${child.sessionKey}`,
+        item: child,
+        depth: 1,
+        childCount: 0,
+        parentSessionId: item.session_id,
+      });
+    }
+  }
+  return rows;
 }
 
 function buildHistoryProjectTree(groups: Group[], projects: Project[]): HistoryProjectTreeNode[] {
@@ -203,10 +281,12 @@ export function HistoryListPane({
   onSessionListScroll,
   onStartResize,
 }: HistoryListPaneProps) {
+  const { t } = useI18n();
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || "未设置快捷键";
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set());
+  const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set());
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -258,6 +338,15 @@ export function HistoryListPane({
       const next = new Set(prev);
       if (next.has(groupId)) next.delete(groupId);
       else next.add(groupId);
+      return next;
+    });
+  }, []);
+
+  const toggleSessionParent = useCallback((sessionKey: string) => {
+    setCollapsedSessionParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(sessionKey)) next.delete(sessionKey);
+      else next.add(sessionKey);
       return next;
     });
   }, []);
@@ -344,9 +433,7 @@ export function HistoryListPane({
 
     for (const group of groupedSessions) {
       next.push({ type: "group", id: `group:${group.label}`, label: group.label });
-      for (const item of group.items) {
-        next.push({ type: "session", id: `session:${item.sessionKey}`, item });
-      }
+      next.push(...buildSessionTreeRows(group.items, collapsedSessionParents));
     }
 
     if (filteredSessionCount === 0) {
@@ -356,7 +443,7 @@ export function HistoryListPane({
       next.push({ type: "loadMore", id: "load-more" });
     }
     return next;
-  }, [filteredSessionCount, groupedSessions, hasMoreSessions, loadingSessions, normalizedGlobal, searchHits, searching]);
+  }, [collapsedSessionParents, filteredSessionCount, groupedSessions, hasMoreSessions, loadingSessions, normalizedGlobal, searchHits, searching]);
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -600,12 +687,40 @@ export function HistoryListPane({
                 )}
 
                 {row.type === "session" && (
-                  <div className="px-2 py-1">
+                  <div className="py-1 pr-2" style={{ paddingLeft: row.depth > 0 ? 22 : 8 }}>
                     <div
                       onContextMenu={(e) => handleSessionContextMenu(e, row.item)}
                       className="ui-list-row flex min-h-[88px] w-full items-start gap-2 rounded-xl border border-border/70 bg-surface-container-lowest px-2.5 py-2 text-left"
                       style={{ backgroundColor: row.item.sessionKey === activeSessionKey ? "var(--bg-tertiary)" : undefined }}
                     >
+                      {row.childCount > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => toggleSessionParent(row.item.sessionKey)}
+                          className="ui-flat-action mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-text-muted"
+                          aria-expanded={!collapsedSessionParents.has(row.item.sessionKey)}
+                          aria-label={t(
+                            collapsedSessionParents.has(row.item.sessionKey)
+                              ? "history.tree.expandChildren"
+                              : "history.tree.collapseChildren",
+                            { count: row.childCount }
+                          )}
+                          title={t(
+                            collapsedSessionParents.has(row.item.sessionKey)
+                              ? "history.tree.expandChildren"
+                              : "history.tree.collapseChildren",
+                            { count: row.childCount }
+                          )}
+                        >
+                          <ChevronRight
+                            size={13}
+                            style={{
+                              transform: collapsedSessionParents.has(row.item.sessionKey) ? "rotate(0deg)" : "rotate(90deg)",
+                              transition: "transform 150ms",
+                            }}
+                          />
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => onOpenSession(row.item.sessionKey)}
@@ -614,10 +729,20 @@ export function HistoryListPane({
                         <div className="flex min-w-0 items-center gap-1.5">
                           {row.item.starred && <Star size={12} className="shrink-0" style={{ color: "var(--warning)" }} fill="currentColor" />}
                           <span className="truncate text-[13px] font-semibold text-text-primary">{row.item.displayTitle}</span>
+                          {row.childCount > 0 && (
+                            <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-[10px] font-medium text-text-muted">
+                              {t("history.tree.childCount", { count: row.childCount })}
+                            </span>
+                          )}
                         </div>
                         <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
                           {row.item.source} · {makeSessionLabel(row.item)} · {row.item.message_count} 条消息
                         </div>
+                        {row.parentSessionId && (
+                          <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">
+                            {t("history.tree.parentSession", { sessionId: row.parentSessionId })}
+                          </div>
+                        )}
                         <div className="ui-dev-label mt-1 truncate text-[11px] text-text-muted">更新于 {formatTime(row.item.updated_at)}</div>
                       </button>
                       <button

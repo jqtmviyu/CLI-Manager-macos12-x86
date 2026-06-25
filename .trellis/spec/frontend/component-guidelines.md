@@ -105,6 +105,32 @@ import { SessionTranscriptContent } from "./SessionTranscriptContent";
 
 **Tests**: Run `npx tsc --noEmit`; manually inspect a history session containing XML-ish blocks, workflow-state blocks, Git changes, long lists, and normal Markdown.
 
+### Convention: History session parent-child grouping is render-only and conservative
+
+**What**: When the history sidebar groups main agent sessions and subagent transcript sessions, keep the grouping in the render layer. Derive child sessions only from explicit path structure such as `.../<parent-session-id>/subagents/agent-*.jsonl`, and only attach them when the matching parent session is already present in the currently loaded list.
+
+**Why**: History loading is paginated and source/project filtered. Scanning outside the current page or matching by loose path/session hints can add latency and can incorrectly attach a subagent to the wrong parent. A conservative render-only transform preserves the backend history contract and avoids misleading UI.
+
+**Correct**:
+
+```tsx
+const parentSessionId = inferSubagentParentSessionId(session);
+const parent = currentRowsBySessionId.get(`${session.source}:${session.project_key}:${parentSessionId}`);
+if (parent) {
+  attachChildUnderLoadedParent(parent, session);
+}
+```
+
+**Wrong**:
+
+```tsx
+// Do not scan all history files or attach by project/path similarity when the parent is not loaded.
+const guessedParent = findAnySessionWithSameProject(session);
+attachChildUnderLoadedParent(guessedParent, session);
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually verify a loaded parent with `subagents/agent-*.jsonl` children renders as a tree, while an orphan child remains a normal row.
+
 ### Convention: Keep settings tab ids stable when only renaming UI labels
 
 **What**: In `SettingsModal`, `SettingsTab` ids are part of the internal navigation contract. When a change only renames or reorganizes a settings page, keep the existing tab id and update only the visible label/title/description.
