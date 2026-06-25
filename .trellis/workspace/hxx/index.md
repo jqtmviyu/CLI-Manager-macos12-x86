@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-06-25
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~512 | Active |
+| `journal-1.md` | ~545 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-06-25 | 完善界面国际化 | `e53f2da` | `master` |
 | 15 | 2026-06-25 | History resume conversation | `2e2d2d2` | `feature/v1.1.9` |
 | 14 | 2026-06-24 | V1.1.9: 删除项目树徽章 + 批量启动终端分组 Pane | `a684092`, `0467e1e` | `feature/v1.1.9` |
 | 13 | 2026-06-24 | 新增设置关于模块 | `3438c6b` | `feature/v1.1.9` |

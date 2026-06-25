@@ -510,3 +510,36 @@ Implemented #51: history session resume button, cwd detail payload, resume termi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 完善界面国际化
+
+**Date**: 2026-06-25
+**Task**: 完善界面国际化
+**Branch**: `master`
+
+### Summary
+
+补齐设置、历史、Git、文件浏览、统计、通知与 Hook 相关文案的中英文国际化，并将国际化要求写入项目规则和 CHANGELOG V1.2.0。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e53f2da` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
