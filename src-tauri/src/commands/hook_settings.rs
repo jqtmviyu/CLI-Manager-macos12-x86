@@ -100,6 +100,7 @@ enum CcSwitchHookProtectionState {
     SyncFailed,
 }
 
+#[derive(Clone, Copy)]
 enum CcSwitchSyncMode {
     Install,
     Uninstall,
@@ -538,9 +539,13 @@ fn merge_common_config_hooks(
     existing: Option<&str>,
     exe: &str,
     tool: CommonConfigTool,
+    codex_hook_state_blocks: &[Vec<String>],
 ) -> Result<String, String> {
     if matches!(tool, CommonConfigTool::Codex) {
-        return Ok(merge_codex_common_config_toml(existing));
+        return Ok(merge_codex_common_config_toml(
+            existing,
+            codex_hook_state_blocks,
+        ));
     }
 
     let mut settings: Value = match existing {
@@ -559,12 +564,12 @@ fn merge_common_config_hooks(
 
 #[cfg(test)]
 fn merge_claude_common_config_hooks(existing: Option<&str>, exe: &str) -> Result<String, String> {
-    merge_common_config_hooks(existing, exe, CommonConfigTool::Claude)
+    merge_common_config_hooks(existing, exe, CommonConfigTool::Claude, &[])
 }
 
 #[cfg(test)]
 fn merge_codex_common_config_hooks(existing: Option<&str>, exe: &str) -> Result<String, String> {
-    merge_common_config_hooks(existing, exe, CommonConfigTool::Codex)
+    merge_common_config_hooks(existing, exe, CommonConfigTool::Codex, &[])
 }
 
 fn strip_common_config_hooks(
@@ -676,10 +681,11 @@ async fn read_common_config_value(
         .await
         .map_err(|err| format!("db_query_failed: {err}"))?;
     row.map(|row| {
-        row.try_get("value")
+        row.try_get::<Option<String>, _>("value")
             .map_err(|err| format!("db_query_failed: {err}"))
     })
     .transpose()
+    .map(Option::flatten)
 }
 
 async fn settings_table_exists(conn: &mut SqliteConnection) -> Result<bool, String> {
@@ -695,6 +701,7 @@ async fn sync_common_config_at_path(
     exe: &str,
     tool: CommonConfigTool,
     mode: CcSwitchSyncMode,
+    codex_hook_state_blocks: &[Vec<String>],
 ) -> Result<CcSwitchHookProtectionState, String> {
     let mut conn = open_db_readwrite(db_path).await?;
     sqlx::query("BEGIN IMMEDIATE")
@@ -711,7 +718,12 @@ async fn sync_common_config_at_path(
         let existing = read_common_config_value(&mut conn, key).await?;
         match mode {
             CcSwitchSyncMode::Install => {
-                let next = merge_common_config_hooks(existing.as_deref(), exe, tool)?;
+                let next = merge_common_config_hooks(
+                    existing.as_deref(),
+                    exe,
+                    tool,
+                    codex_hook_state_blocks,
+                )?;
                 sqlx::query(
                     "INSERT INTO settings (key, value) VALUES (?1, ?2) \
                      ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -792,7 +804,23 @@ async fn sync_ccswitch_tool_common_config(
             );
         }
     };
-    match sync_common_config_at_path(&path, &exe, tool, mode).await {
+    let codex_hook_state_blocks =
+        if matches!(tool, CommonConfigTool::Codex) && matches!(mode, CcSwitchSyncMode::Install) {
+            match read_codex_cli_manager_hook_state_blocks(config_dir) {
+                Ok(blocks) => blocks,
+                Err(err) => {
+                    return cc_switch_status(
+                        CcSwitchHookProtectionState::SyncFailed,
+                        Some(&path),
+                        Some(err),
+                        config_dir,
+                    );
+                }
+            }
+        } else {
+            Vec::new()
+        };
+    match sync_common_config_at_path(&path, &exe, tool, mode, &codex_hook_state_blocks).await {
         Ok(state) => cc_switch_status(state, Some(&path), None, config_dir),
         Err(err) => cc_switch_status(
             CcSwitchHookProtectionState::SyncFailed,
@@ -1109,7 +1137,7 @@ fn set_toml_feature_hooks(content: &str) -> String {
     let mut insert_index = lines.len();
     for index in header_index + 1..lines.len() {
         let trimmed = lines[index].trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if is_toml_table_header(&lines[index]) {
             insert_index = index;
             break;
         }
@@ -1126,9 +1154,17 @@ fn set_toml_feature_hooks(content: &str) -> String {
     format!("{}\n", lines.join("\n"))
 }
 
-fn merge_codex_common_config_toml(existing: Option<&str>) -> String {
+fn merge_codex_common_config_toml(
+    existing: Option<&str>,
+    hook_state_blocks: &[Vec<String>],
+) -> String {
     let Some(raw) = existing.filter(|value| !value.trim().is_empty()) else {
-        return format!("[features]\nhooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}\n");
+        let mut lines = vec![
+            "[features]".to_string(),
+            format!("hooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}"),
+        ];
+        merge_codex_common_config_hook_state_blocks(&mut lines, hook_state_blocks);
+        return format!("{}\n", lines.join("\n"));
     };
 
     let mut lines: Vec<String> = raw.lines().map(ToString::to_string).collect();
@@ -1141,24 +1177,32 @@ fn merge_codex_common_config_toml(existing: Option<&str>) -> String {
     }
 
     let Some(header_index) = features_header_index else {
-        if !lines.is_empty() && lines.last().is_some_and(|line| !line.trim().is_empty()) {
-            lines.push(String::new());
+        let insert_index = first_toml_table_header_index(&lines).unwrap_or(lines.len());
+        let mut block = Vec::new();
+        if insert_index > 0 && !lines[insert_index - 1].trim().is_empty() {
+            block.push(String::new());
         }
-        lines.push("[features]".to_string());
-        lines.push(format!("hooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}"));
+        block.push("[features]".to_string());
+        block.push(format!("hooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}"));
+        if insert_index < lines.len() {
+            block.push(String::new());
+        }
+        lines.splice(insert_index..insert_index, block);
+        merge_codex_common_config_hook_state_blocks(&mut lines, hook_state_blocks);
         return format!("{}\n", lines.join("\n"));
     };
 
     let mut insert_index = lines.len();
     for index in header_index + 1..lines.len() {
         let trimmed = lines[index].trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if is_toml_table_header(&lines[index]) {
             insert_index = index;
             break;
         }
         if trimmed.split_once('=').is_some_and(|(key, value)| {
             key.trim() == "hooks" && toml_bool_value(value) == Some(true)
         }) {
+            merge_codex_common_config_hook_state_blocks(&mut lines, hook_state_blocks);
             return format!("{}\n", lines.join("\n"));
         }
         if trimmed
@@ -1166,6 +1210,7 @@ fn merge_codex_common_config_toml(existing: Option<&str>) -> String {
             .is_some_and(|(key, _)| key.trim() == "hooks")
         {
             lines[index] = format!("hooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}");
+            merge_codex_common_config_hook_state_blocks(&mut lines, hook_state_blocks);
             return format!("{}\n", lines.join("\n"));
         }
     }
@@ -1174,13 +1219,229 @@ fn merge_codex_common_config_toml(existing: Option<&str>) -> String {
         insert_index,
         format!("hooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}"),
     );
+    merge_codex_common_config_hook_state_blocks(&mut lines, hook_state_blocks);
     format!("{}\n", lines.join("\n"))
 }
 
+fn first_toml_table_header_index(lines: &[String]) -> Option<usize> {
+    lines.iter().position(|line| is_toml_table_header(line))
+}
+
+fn is_toml_table_header(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with('[') && trimmed.ends_with(']')
+}
+
+fn merge_codex_common_config_hook_state_blocks(
+    lines: &mut Vec<String>,
+    hook_state_blocks: &[Vec<String>],
+) {
+    let hook_state_keys: Vec<String> = hook_state_blocks
+        .iter()
+        .filter_map(|block| block.first())
+        .filter_map(|line| toml_hooks_state_key(line))
+        .map(str::to_string)
+        .collect();
+
+    remove_marker_owned_codex_hook_state_blocks(lines);
+    remove_codex_hook_state_blocks(lines, &hook_state_keys);
+    trim_empty_lines(lines);
+
+    if hook_state_blocks.is_empty() {
+        return;
+    }
+
+    let insert_index = codex_hook_state_insert_index(lines);
+    let mut block = Vec::new();
+    if insert_index > 0 && !lines[insert_index - 1].trim().is_empty() {
+        block.push(String::new());
+    }
+    for state_block in hook_state_blocks {
+        block.push(CODEX_COMMON_CONFIG_HOOKS_MARKER.to_string());
+        block.extend(state_block.iter().cloned());
+        block.push(String::new());
+    }
+    if insert_index < lines.len() && block.last().is_some_and(|line| !line.trim().is_empty()) {
+        block.push(String::new());
+    }
+    lines.splice(insert_index..insert_index, block);
+    trim_empty_lines(lines);
+}
+
+fn codex_hook_state_insert_index(lines: &[String]) -> usize {
+    let Some(features_index) = lines.iter().position(|line| line.trim() == "[features]") else {
+        return first_toml_table_header_index(lines).unwrap_or(lines.len());
+    };
+    for index in features_index + 1..lines.len() {
+        if is_toml_table_header(&lines[index]) {
+            return index;
+        }
+    }
+    lines.len()
+}
+
+fn remove_marker_owned_codex_hook_state_blocks(lines: &mut Vec<String>) {
+    let mut next = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        if lines[index].trim() == CODEX_COMMON_CONFIG_HOOKS_MARKER
+            && lines
+                .get(index + 1)
+                .and_then(|line| toml_hooks_state_key(line))
+                .is_some()
+        {
+            index += 2;
+            while index < lines.len() && !is_toml_table_header(&lines[index]) {
+                index += 1;
+            }
+            continue;
+        }
+        next.push(lines[index].clone());
+        index += 1;
+    }
+    *lines = next;
+}
+
+fn remove_codex_hook_state_blocks(lines: &mut Vec<String>, hook_state_keys: &[String]) {
+    if hook_state_keys.is_empty() {
+        return;
+    }
+
+    let mut next = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let remove_block = toml_hooks_state_key(&lines[index])
+            .is_some_and(|key| hook_state_keys.iter().any(|expected| expected == key));
+        if remove_block {
+            if next
+                .last()
+                .is_some_and(|line: &String| line.trim() == CODEX_COMMON_CONFIG_HOOKS_MARKER)
+            {
+                next.pop();
+            }
+            index += 1;
+            while index < lines.len() && !is_toml_table_header(&lines[index]) {
+                index += 1;
+            }
+            continue;
+        }
+        next.push(lines[index].clone());
+        index += 1;
+    }
+    *lines = next;
+}
+
+fn trim_empty_lines(lines: &mut Vec<String>) {
+    while lines.first().is_some_and(|line| line.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+}
+
+fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<String>>, String> {
+    let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+    let hooks = read_json_if_exists(&hooks_path)?;
+    let expected_keys = codex_cli_manager_hook_state_keys(&hooks, &hooks_path);
+    if expected_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let content = match fs::read_to_string(&config_path) {
+        Ok(value) => value,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("读取 {} 失败: {err}", path_to_string(&config_path))),
+    };
+    Ok(extract_codex_hook_state_blocks(&content, &expected_keys))
+}
+
+fn codex_cli_manager_hook_state_keys(settings: &Value, hooks_path: &Path) -> Vec<String> {
+    let hooks_path = toml_escape_basic_string(&path_to_string(hooks_path));
+    let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut keys = Vec::new();
+    for event in CODEX_HOOK_EVENTS {
+        let Some(event_name) = codex_hook_state_event_name(event) else {
+            continue;
+        };
+        let Some(entries) = hooks.get(event).and_then(Value::as_array) else {
+            continue;
+        };
+        for (entry_index, entry) in entries.iter().enumerate() {
+            let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
+                continue;
+            };
+            for (hook_index, hook) in commands.iter().enumerate() {
+                if is_cli_manager_command(hook, &CODEX_LEGACY_SCRIPTS) {
+                    keys.push(format!(
+                        "{hooks_path}:{event_name}:{entry_index}:{hook_index}"
+                    ));
+                }
+            }
+        }
+    }
+    keys
+}
+
+fn codex_hook_state_event_name(event: &str) -> Option<&'static str> {
+    match event {
+        "PermissionRequest" => Some("permission_request"),
+        "SessionStart" => Some("session_start"),
+        "UserPromptSubmit" => Some("user_prompt_submit"),
+        "Stop" => Some("stop"),
+        "SubagentStart" => Some("subagent_start"),
+        "SubagentStop" => Some("subagent_stop"),
+        _ => None,
+    }
+}
+
+fn extract_codex_hook_state_blocks(
+    config: &str,
+    expected_keys: &[String],
+) -> Vec<Vec<String>> {
+    let lines: Vec<&str> = config.lines().collect();
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let key = toml_hooks_state_key(lines[index]);
+        if key.is_some_and(|key| expected_keys.iter().any(|expected| expected == key)) {
+            let mut block = vec![lines[index].to_string()];
+            index += 1;
+            while index < lines.len() && !is_toml_table_header(lines[index]) {
+                block.push(lines[index].to_string());
+                index += 1;
+            }
+            blocks.push(block);
+            continue;
+        }
+        index += 1;
+    }
+    blocks
+}
+
+fn toml_hooks_state_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    trimmed
+        .strip_prefix("[hooks.state.\"")
+        .and_then(|tail| tail.strip_suffix("\"]"))
+}
+
+fn toml_escape_basic_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 fn strip_codex_common_config_toml(raw: &str) -> Option<String> {
+    let mut source_lines: Vec<String> = raw.lines().map(ToString::to_string).collect();
+    let before_state_strip = source_lines.len();
+    remove_marker_owned_codex_hook_state_blocks(&mut source_lines);
+    let removed_state_blocks = source_lines.len() != before_state_strip;
+
     let mut lines = Vec::new();
     let mut removed = false;
-    for line in raw.lines() {
+    for line in &source_lines {
         let trimmed = line.trim();
         let is_owned_hooks_line = trimmed.contains(CODEX_COMMON_CONFIG_HOOKS_MARKER)
             && trimmed
@@ -1193,7 +1454,7 @@ fn strip_codex_common_config_toml(raw: &str) -> Option<String> {
         lines.push(line.to_string());
     }
 
-    if !removed {
+    if !removed && !removed_state_blocks {
         return Some(format!("{}\n", raw.trim_end()));
     }
 
@@ -1213,7 +1474,7 @@ fn trim_empty_toml_features_section(lines: &mut Vec<String>) {
     let mut end_index = lines.len();
     for (index, line) in lines.iter().enumerate().skip(header_index + 1) {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if is_toml_table_header(line) {
             end_index = index;
             break;
         }
@@ -1228,7 +1489,7 @@ fn toml_features_hooks_enabled(raw: &str) -> bool {
     let mut in_features = false;
     for line in raw.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if is_toml_table_header(line) {
             in_features = trimmed == "[features]";
             continue;
         }
@@ -1260,7 +1521,7 @@ fn codex_hooks_feature_installed(config_path: &Path) -> Result<bool, String> {
     let mut in_features = false;
     for line in content.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if is_toml_table_header(line) {
             in_features = trimmed == "[features]";
             continue;
         }
@@ -2050,6 +2311,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn merge_codex_common_config_carries_cli_manager_hook_state() {
+        let tmp = TempDir::new().unwrap();
+        let codex_dir = tmp.path().join("codex");
+        fs::create_dir_all(&codex_dir).unwrap();
+        install_codex_hooks(&codex_dir).unwrap();
+
+        let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+        let hooks_key = format!(
+            "{}:permission_request:0:0",
+            toml_escape_basic_string(&path_to_string(&hooks_path))
+        );
+        let project_hooks_key = format!(
+            "{}:permission_request:0:0",
+            toml_escape_basic_string(r"F:\github\CLI-Manager\.codex\hooks.json")
+        );
+        let config = format!(
+            r#"[hooks.state."{hooks_key}"]
+trusted_hash = "sha256:new"
+
+[hooks.state."{project_hooks_key}"]
+trusted_hash = "sha256:project"
+"#
+        );
+        fs::write(codex_dir.join(CODEX_CONFIG_FILE_NAME), config).unwrap();
+        let hook_state_blocks = read_codex_cli_manager_hook_state_blocks(&codex_dir).unwrap();
+        assert_eq!(hook_state_blocks.len(), 1);
+
+        let existing = format!(
+            r#"model_reasoning_effort = "xhigh"
+
+[features]
+hooks = true # CLI-Manager hook protection
+
+{CODEX_COMMON_CONFIG_HOOKS_MARKER}
+[hooks.state."{hooks_key}"]
+trusted_hash = "sha256:old"
+
+[projects.'\\?\F:\idea-work\business-center']
+trust_level = "trusted"
+"#
+        );
+        let merged = merge_common_config_hooks(
+            Some(&existing),
+            "/tmp/cli-manager",
+            CommonConfigTool::Codex,
+            &hook_state_blocks,
+        )
+        .unwrap();
+
+        assert!(merged.contains(&format!(r#"[hooks.state."{hooks_key}"]"#)));
+        assert!(merged.contains(r#"trusted_hash = "sha256:new""#));
+        assert!(!merged.contains("sha256:old"));
+        assert!(!merged.contains("sha256:project"));
+        assert!(merged.find("[features]").unwrap() < merged.find("[hooks.state.").unwrap());
+        assert!(
+            merged.find("[hooks.state.").unwrap()
+                < merged
+                    .find(r#"[projects.'\\?\F:\idea-work\business-center']"#)
+                    .unwrap()
+        );
+    }
+
+    #[test]
+    fn strip_codex_common_config_hooks_removes_marker_owned_hook_state_blocks() {
+        let raw = format!(
+            r#"[features]
+hooks = true # CLI-Manager hook protection
+
+{CODEX_COMMON_CONFIG_HOOKS_MARKER}
+[hooks.state."C:\\Users\\1\\.codex\\hooks.json:permission_request:0:0"]
+trusted_hash = "sha256:owned"
+"#
+        );
+
+        let stripped = strip_codex_common_config_hooks(Some(&raw)).unwrap();
+
+        assert!(stripped.is_none());
+    }
+
+    #[tokio::test]
     async fn sync_codex_common_config_writes_codex_key_without_touching_claude_key() {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("cc-switch.db");
@@ -2075,6 +2416,7 @@ mod tests {
             exe,
             CommonConfigTool::Codex,
             CcSwitchSyncMode::Install,
+            &[],
         )
         .await
         .unwrap();
@@ -2098,6 +2440,124 @@ mod tests {
         assert!(codex_common_config.contains("hooks = true"));
         assert!(codex_common_config.contains(CODEX_COMMON_CONFIG_HOOKS_MARKER));
         assert_eq!(claude_common_config, existing_claude);
+    }
+
+    #[tokio::test]
+    async fn sync_codex_common_config_preserves_real_ccswitch_toml_shape() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("cc-switch.db");
+        fs::File::create(&db_path).unwrap();
+        let exe = "/tmp/cli-manager";
+        let existing_codex = r#"model_reasoning_effort = "xhigh"
+disable_response_storage = true
+personality = "pragmatic"
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+alternate_screen = "never"
+
+[projects.'\\?\F:\idea-work\business-center']
+trust_level = "trusted"
+
+[windows]
+sandbox = "unelevated"
+
+[tui]
+status_line = ["model-with-reasoning", "context-remaining", "current-dir"]
+
+model_instructions_file = "./instruction.md"
+"#;
+
+        let mut conn = open_db_readwrite(&db_path).await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO settings (key, value) VALUES (?1, ?2)")
+            .bind(CCSWITCH_COMMON_CONFIG_CODEX_KEY)
+            .bind(existing_codex)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let state = sync_common_config_at_path(
+            &db_path,
+            exe,
+            CommonConfigTool::Codex,
+            CcSwitchSyncMode::Install,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state, CcSwitchHookProtectionState::Synced);
+
+        let mut conn = open_db_readwrite(&db_path).await.unwrap();
+        let codex_common_config =
+            read_common_config_value(&mut conn, CCSWITCH_COMMON_CONFIG_CODEX_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+
+        let features_index = codex_common_config.find("[features]").unwrap();
+        let projects_index = codex_common_config
+            .find(r#"[projects.'\\?\F:\idea-work\business-center']"#)
+            .unwrap();
+        assert!(features_index < projects_index);
+        assert!(codex_common_config.contains(r#"[projects.'\\?\F:\idea-work\business-center']"#));
+        assert!(codex_common_config.contains("[windows]"));
+        assert!(codex_common_config.contains("[tui]"));
+        assert!(codex_common_config.contains(
+            "status_line = [\"model-with-reasoning\", \"context-remaining\", \"current-dir\"]"
+        ));
+        assert!(codex_common_config.contains("[features]"));
+        assert!(codex_common_config.contains("hooks = true"));
+        assert!(codex_common_config.contains(CODEX_COMMON_CONFIG_HOOKS_MARKER));
+        assert!(codex_common_config_has_hooks(Some(&codex_common_config), exe).unwrap());
+    }
+
+    #[tokio::test]
+    async fn sync_codex_common_config_treats_null_setting_value_as_missing() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("cc-switch.db");
+        fs::File::create(&db_path).unwrap();
+        let exe = "/tmp/cli-manager";
+
+        let mut conn = open_db_readwrite(&db_path).await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)")
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO settings (key, value) VALUES (?1, NULL)")
+            .bind(CCSWITCH_COMMON_CONFIG_CODEX_KEY)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        drop(conn);
+
+        let state = sync_common_config_at_path(
+            &db_path,
+            exe,
+            CommonConfigTool::Codex,
+            CcSwitchSyncMode::Install,
+            &[],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(state, CcSwitchHookProtectionState::Synced);
+
+        let mut conn = open_db_readwrite(&db_path).await.unwrap();
+        let codex_common_config =
+            read_common_config_value(&mut conn, CCSWITCH_COMMON_CONFIG_CODEX_KEY)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            codex_common_config,
+            format!("[features]\nhooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}\n")
+        );
     }
 
     #[test]

@@ -224,9 +224,11 @@ interface HookSettingsStatus {
 - Frontend must pass `ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined`; `null`/missing means platform default `~/.cc-switch/cc-switch.db`.
 - Backend must reuse the cc-switch DB resolver: explicit custom paths are validated and never silently replaced by defaults.
 - Installing Claude Hook writes normal Claude `settings.json` hooks first, then best-effort merges the same CLI-Manager-owned hook commands into `settings.common_config_claude`.
-- Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
+- Installing Codex Hook writes normal Codex `hooks.json` commands and `config.toml` feature flags first, then best-effort merges the TOML `[features].hooks = true` flag plus any current CLI-Manager-owned Codex `[hooks.state.*]` trust blocks into `settings.common_config_codex`. Codex hook commands remain in `hooks.json`; `common_config_codex` is not JSON.
 - Hook settings UI shows the cc-switch protection card once, above system notification settings. Do not duplicate it in both Claude and Codex sections.
-- Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and must preserve other TOML fields.
+- Claude common-config merge may remove/replace only CLI-Manager-owned hook commands (`__hook` marker or known legacy scripts); it must preserve non-hook fields and non-CLI-Manager hook entries. Codex common-config merge may only add or replace the TOML `features.hooks` flag and marker-owned `[hooks.state.*]` trust blocks for the current user-level Codex `hooks.json`; it must preserve other TOML fields and unrelated hook state.
+- `settings.value` is nullable in cc-switch DBs. A `NULL` value for `common_config_<tool>` is treated as missing config, not as `db_query_failed`.
+- When `common_config_codex` has no `[features]` table, insert the `[features]` block before the first existing TOML table header; append only when the snippet has top-level keys and no tables. This avoids leaking later text-concatenated provider keys into `[features]` while preserving tables such as `[projects.'\\?\F:\...']`, `[windows]`, and `[tui]`.
 - Common-config writes use `sqlx` and an explicit transaction. Do not add `rusqlite`.
 - If cc-switch is missing or common-config sync fails, Hook installation still succeeds and the returned `ccSwitch.state` explains the protection status.
 - WSL config paths must not be paired with a host cc-switch DB silently; return `unavailable` with `wslMismatch: true`.
@@ -242,20 +244,30 @@ interface HookSettingsStatus {
 | Missing `settings` table | `unavailable`; Hook install succeeds |
 | Invalid `common_config_claude` JSON | `syncFailed`, message `common_config_parse_failed`; do not overwrite |
 | Existing `common_config_codex` TOML | preserve existing TOML fields and set `[features].hooks = true`; do not parse as JSON |
+| Existing `common_config_codex` row with `NULL` value | treat as missing config; write minimal `[features]\nhooks = true` TOML |
+| Current Codex `config.toml` has trusted CLI-Manager `hooks.state` entries | copy those state blocks into `common_config_codex` with CLI-Manager marker comments |
+| Current Codex `config.toml` has unrelated or project-local `.codex/hooks.json` state | do not copy into `common_config_codex` |
 | SQLite open/query/write failure | `syncFailed` with stable `db_*`/`db_write_failed` message |
 | Existing non-CLI-Manager hooks | preserved on install, reinstall, and uninstall |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: User selected a moved cc-switch DB in Settings -> Provider; Hook install syncs the relevant `common_config_<tool>` key at that exact path and returns `synced`.
+- Good: `common_config_codex` contains top-level Codex keys plus `[projects.'\\?\F:\idea-work\business-center']`, `[windows]`, and `[tui]`; Hook install preserves all existing lines and inserts `[features].hooks = true` before the first table.
+- Good: Codex has already trusted CLI-Manager entries in user-level `~/.codex/config.toml`; Hook install copies only those current `~/.codex/hooks.json:<event>:<entry>:<hook>` state blocks into `common_config_codex`.
 - Base: cc-switch is not installed; Hook install still writes normal CLI settings and returns `notDetected`.
+- Base: Codex hooks are installed but no trust hash exists yet; common-config sync still writes `[features].hooks = true` and does not fabricate `trusted_hash` values.
 - Base: user previously installed Hook, cc-switch rewrites `settings.json`, and startup calls status with `autoRepair: true`; backend restores missing hooks and frontend shows one lightweight notice.
 - Bad: invalid explicit DB path falls back to `%USERPROFILE%/.cc-switch/cc-switch.db`; this can write the wrong database and is forbidden.
 - Bad: merging common config replaces provider env, MCP, permissions, or third-party hooks; only CLI-Manager hook entries are owned here.
+- Bad: appending a new `[features]` table after the last existing TOML table in a common-config snippet; downstream text concatenation can put provider keys in the wrong TOML table scope.
+- Bad: copying every `[hooks.state.*]` entry from Codex config; this can leak project-local or user-owned hook trust into cc-switch global common config.
 
 ### 6. Tests Required
 
 - Rust unit tests for Claude common-config merge preserving existing fields and non-CLI-Manager hooks, and Codex TOML common-config preserving existing fields while enabling `[features].hooks`.
+- Rust regression tests for Codex common-config with the real cc-switch `settings(key TEXT PRIMARY KEY, value TEXT)` shape, including nullable `value` and Windows project table keys.
+- Rust regression tests for copying only current user-level CLI-Manager Codex `hooks.state` blocks into `common_config_codex`, replacing stale marker-owned hashes, and excluding project-local `.codex/hooks.json` state.
 - Rust unit tests for strip/uninstall preserving non-CLI-Manager hooks.
 - Rust regression test that Claude common-config status requires every installed event, including Claude `Notification`; Codex common-config status requires `[features].hooks = true`.
 - Rust unit test that invalid Claude common-config JSON returns `common_config_parse_failed`.
