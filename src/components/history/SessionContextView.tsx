@@ -42,9 +42,35 @@ interface SessionContextViewProps {
   session: HistorySessionDetail | null;
 }
 
+function sumToolCounts(items: { count: number }[] | undefined): number {
+  return items?.reduce((sum, item) => sum + item.count, 0) ?? 0;
+}
+
+function ContextMetric({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
+  return (
+    <span className="ui-session-context-metric" title={title ?? `${label} ${value}`}>
+      <small>{label}</small>
+      <b>{value}</b>
+    </span>
+  );
+}
+
 export function SessionContextView({ session }: SessionContextViewProps) {
   const { t } = useI18n();
   const stats = calculateTokenStats(session);
+  const usage = session?.usage;
+  const totalToolCalls = usage?.tool_call_count ?? 0;
+  const mcpCallCount = sumToolCounts(usage?.mcp_calls);
+  const skillCallCount = sumToolCounts(usage?.skill_calls);
+  const builtinCallCount = sumToolCounts(usage?.builtin_calls);
   const contextLimit = session?.usage?.context_window ?? getContextLimit(stats.dominantModel);
   const lastContextTokens = session?.usage?.last_context_tokens ?? null;
   const usageRatio = contextLimit && lastContextTokens !== null ? lastContextTokens / contextLimit : null;
@@ -113,10 +139,10 @@ export function SessionContextView({ session }: SessionContextViewProps) {
             <span className="ui-session-context-donut-label">{formatCompactCount(stats.totalTokens)}</span>
           </Donut>
           <div className="ui-session-process-metrics">
-            <span>{t("termStats.input")} <b>{formatCompactCount(stats.inputTokens)}</b></span>
-            <span>{t("termStats.output")} <b>{formatCompactCount(stats.outputTokens)}</b></span>
-            <span>{t("termStats.cacheHit")} <b>{formatCompactCount(stats.cacheReadTokens)}</b></span>
-            <span>{t("termStats.cacheWrite")} <b>{formatCompactCount(stats.cacheCreationTokens)}</b></span>
+            <ContextMetric label={t("termStats.input")} value={formatCompactCount(stats.inputTokens)} />
+            <ContextMetric label={t("termStats.output")} value={formatCompactCount(stats.outputTokens)} />
+            <ContextMetric label={t("termStats.cacheHit")} value={formatCompactCount(stats.cacheReadTokens)} />
+            <ContextMetric label={t("termStats.cacheWrite")} value={formatCompactCount(stats.cacheCreationTokens)} />
           </div>
         </div>
       </section>
@@ -127,10 +153,10 @@ export function SessionContextView({ session }: SessionContextViewProps) {
           {t("history.context.requestStats")}
         </div>
         <div className="ui-session-process-metrics">
-          <span>{t("history.context.trendPoints")} <b>{trendPoints.length}</b></span>
-          <span>{t("history.context.peak")} <b>{formatCompactCount(peakTokens)}</b></span>
-          <span>{t("history.context.average")} <b>{formatCompactCount(averageTokens)}</b></span>
-          <span>{t("termStats.model")} <b>{stats.dominantModel ?? "—"}</b></span>
+          <ContextMetric label={t("history.context.trendPoints")} value={String(trendPoints.length)} />
+          <ContextMetric label={t("history.context.peak")} value={formatCompactCount(peakTokens)} />
+          <ContextMetric label={t("history.context.average")} value={formatCompactCount(averageTokens)} />
+          <ContextMetric label={t("termStats.model")} value={stats.dominantModel ?? "—"} />
         </div>
       </section>
 
@@ -140,10 +166,12 @@ export function SessionContextView({ session }: SessionContextViewProps) {
           {t("history.context.costAndMessages")}
         </div>
         <div className="ui-session-process-metrics">
-          <span>{t("termStats.estimatedCost")} <b>{formatCost(stats.estimatedCost)}</b></span>
-          <span>{t("termStats.messageCount")} <b>{session.messages.length}</b></span>
-          <span>{t("termStats.tools")} <b>{session.usage?.tool_call_count ?? 0}</b></span>
-          <span>{t("termStats.total")} Token <b>{formatCompactCount(stats.totalTokens)}</b></span>
+          <ContextMetric label={t("termStats.estimatedCost")} value={formatCost(stats.estimatedCost)} />
+          <ContextMetric label={t("termStats.messageCount")} value={String(session.messages.length)} />
+          <ContextMetric label={t("termStats.tools")} value={formatCompactCount(totalToolCalls)} />
+          <ContextMetric label="MCP" value={formatCompactCount(mcpCallCount)} />
+          <ContextMetric label={t("history.tools.skillCommand")} value={formatCompactCount(skillCallCount)} />
+          <ContextMetric label={t("history.tools.builtin")} value={formatCompactCount(builtinCallCount)} />
         </div>
       </section>
 

@@ -3575,6 +3575,33 @@
   background-color: color-mix(in srgb, var(--surface-container-low) 76%, transparent);
 }
 
+.ui-session-process-metrics .ui-session-context-metric {
+  display: grid;
+  min-height: 2.65rem;
+  align-content: center;
+  justify-content: stretch;
+  gap: 0.16rem;
+}
+
+.ui-session-context-metric small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-session-context-metric b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ui-session-process-metrics b,
 .ui-session-tool-counts b {
   color: var(--text-primary);
