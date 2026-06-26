@@ -62,14 +62,21 @@ fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, String> {
 /// * `Ok(None)` - 非 git 仓库、detached HEAD、路径无效，或查询失败
 #[tauri::command]
 pub async fn get_current_git_branch(path: String) -> Result<Option<String>, String> {
-    // 前置检查：路径为空或不存在时快速返回
-    if path.is_empty() || !Path::new(&path).exists() {
+    if path.is_empty() {
         return Ok(None);
     }
 
     tokio::task::spawn_blocking(move || {
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&path) {
+            return Ok(current_wsl_git_branch(&distro, &linux_path));
+        }
+
+        if !Path::new(&path).exists() {
+            return Ok(None);
+        }
+
         // 尝试打开 git 仓库
-        let repo = match Repository::open(&path) {
+        let repo = match open_git_repo(&path) {
             Ok(r) => r,
             Err(_) => return Ok(None), // 非 git 仓库或无权限
         };
@@ -86,6 +93,19 @@ pub async fn get_current_git_branch(path: String) -> Result<Option<String>, Stri
     })
     .await
     .map_err(|e| format!("git 分支查询任务失败: {e}"))?
+}
+
+fn current_wsl_git_branch(distro: &str, linux_path: &str) -> Option<String> {
+    match run_wsl_git(distro, linux_path, &["branch", "--show-current"]) {
+        Ok(stdout) => {
+            let branch = String::from_utf8_lossy(&stdout).trim().to_string();
+            (!branch.is_empty()).then_some(branch)
+        }
+        Err(e) => {
+            log::warn!("[git:wsl] 当前分支查询降级为空: {e}");
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,7 +248,7 @@ fn git_get_changes_wsl(
     let status_stdout = run_wsl_git(
         distro,
         linux_path,
-        &["status", "--porcelain=v1", "-z", "-uall"],
+        &["status", "--porcelain=v1", "-z", "-unormal"],
     )
     .map_err(|e| {
         let err_msg = format!("获取 WSL Git 状态失败: {e}");
@@ -739,7 +759,7 @@ pub async fn git_discard_file(
             return Err("path_not_found".to_string());
         }
 
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
 
         match status.as_str() {
             "U" | "??" => Err("untracked_not_supported".to_string()),
@@ -1124,7 +1144,7 @@ pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(
         if !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         let rel = Path::new(&file_path);
         if path.join(&file_path).exists() {
@@ -1435,7 +1455,7 @@ pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, 
         if !path.exists() {
             return Err("path_not_found".to_string());
         }
-        let repo = Repository::open(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
 
         // 进行中的合并/变基（git2 仓库状态）。变基期间 HEAD 通常 detached，
         // 需在 detached 早返回前计算，避免漏报。
@@ -1772,10 +1792,10 @@ mod tests {
 
     #[test]
     fn parses_wsl_git_status_basic_entries() {
-        let input = b" M src/main.rs\0M  src/lib.rs\0A  added.txt\0 D deleted.txt\0?? notes/new.md\0";
+        let input = b" M src/main.rs\0M  src/lib.rs\0A  added.txt\0 D deleted.txt\0?? notes/new.md\0?? generated/\0";
         let changes = parse_wsl_git_status(input);
 
-        assert_eq!(changes.len(), 5);
+        assert_eq!(changes.len(), 6);
         assert_eq!(changes[0].path, "src/main.rs");
         assert_eq!(changes[0].status, "M");
         assert!(!changes[0].staged);
@@ -1788,6 +1808,9 @@ mod tests {
         assert!(!changes[3].staged);
         assert_eq!(changes[4].status, "U");
         assert!(!changes[4].staged);
+        assert_eq!(changes[5].path, "generated/");
+        assert_eq!(changes[5].status, "U");
+        assert!(!changes[5].staged);
     }
 
     #[test]

@@ -5,6 +5,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
+use memchr::memmem;
 use serde::Serialize;
 
 const TEXT_FILE_MAX_BYTES: u64 = 2 * 1024 * 1024;
@@ -115,10 +116,11 @@ pub async fn file_list_dir(root_path: String, relative_path: String) -> Result<V
             });
         }
 
-        entries.sort_by(|a, b| {
-            a.kind
-                .cmp(&b.kind)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        entries.sort_by_cached_key(|entry| {
+            (
+                if entry.kind == "directory" { 0u8 } else { 1u8 },
+                entry.name.to_lowercase(),
+            )
         });
         Ok(entries)
     })
@@ -136,7 +138,7 @@ pub async fn file_search(root_path: String, query: String) -> Result<Vec<FileEnt
         }
         let mut entries = Vec::new();
         collect_search_matches(&root, &root, &needle, &mut entries)?;
-        entries.sort_by(|a, b| a.path.to_lowercase().cmp(&b.path.to_lowercase()));
+        entries.sort_by_cached_key(|entry| entry.path.to_lowercase());
         Ok(entries)
     })
     .await
@@ -153,12 +155,7 @@ pub async fn file_search_content(root_path: String, query: String) -> Result<Vec
         }
         let mut matches = Vec::new();
         collect_content_matches(&root, &root, &needle, &mut matches)?;
-        matches.sort_by(|a, b| {
-            a.path
-                .to_lowercase()
-                .cmp(&b.path.to_lowercase())
-                .then_with(|| a.line_number.cmp(&b.line_number))
-        });
+        matches.sort_by_cached_key(|item| (item.path.to_lowercase(), item.line_number));
         Ok(matches)
     })
     .await
@@ -526,7 +523,23 @@ fn should_skip_content_file(path: &Path) -> bool {
 }
 
 fn text_matches(value: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.is_ascii() {
+        return memmem::find(value.as_bytes(), needle.as_bytes()).is_some()
+            || contains_ascii_case_insensitive(value.as_bytes(), needle.as_bytes());
+    }
     value.to_lowercase().contains(needle)
+}
+
+fn contains_ascii_case_insensitive(haystack: &[u8], needle_lowercase: &[u8]) -> bool {
+    if needle_lowercase.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle_lowercase.len())
+        .any(|window| window.eq_ignore_ascii_case(needle_lowercase))
 }
 
 fn truncate_search_line(line: &str) -> String {

@@ -855,7 +855,7 @@ pub async fn history_search(
 
             let scan_result =
                 iter_session_messages_filtered(&file_ref.path, &normalized_query, |_, msg| {
-                    if !msg.content.to_lowercase().contains(&normalized_query) {
+                    if !message_content_matches_query(&msg.content, &normalized_query) {
                         return true;
                     }
                     hits.push(HistorySearchResult {
@@ -3409,6 +3409,14 @@ fn contains_ascii_case_insensitive(haystack: &[u8], needle_lowercase: &[u8]) -> 
     haystack
         .windows(needle_lowercase.len())
         .any(|window| window.eq_ignore_ascii_case(needle_lowercase))
+}
+
+fn message_content_matches_query(content: &str, lowercase_query: &str) -> bool {
+    if lowercase_query.is_ascii() {
+        return memmem::find(content.as_bytes(), lowercase_query.as_bytes()).is_some()
+            || contains_ascii_case_insensitive(content.as_bytes(), lowercase_query.as_bytes());
+    }
+    content.to_lowercase().contains(lowercase_query)
 }
 
 fn extract_usage_tokens(value: &Value) -> UsageTokenScan {

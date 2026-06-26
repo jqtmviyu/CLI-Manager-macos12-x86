@@ -182,6 +182,7 @@ function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
 }
 
 const inFlightChangeRequests = new Map<string, Promise<GitFileChange[]>>();
+const inFlightBranchStatusRequests = new Map<string, Promise<GitBranchStatus>>();
 
 function invokeGitChanges(projectPath: string): Promise<GitFileChange[]> {
   const existing = inFlightChangeRequests.get(projectPath);
@@ -193,6 +194,19 @@ function invokeGitChanges(projectPath: string): Promise<GitFileChange[]> {
     }
   });
   inFlightChangeRequests.set(projectPath, request);
+  return request;
+}
+
+function invokeGitBranchStatus(projectPath: string): Promise<GitBranchStatus> {
+  const existing = inFlightBranchStatusRequests.get(projectPath);
+  if (existing) return existing;
+
+  const request = invoke<GitBranchStatus>("git_branch_status", { projectPath }).finally(() => {
+    if (inFlightBranchStatusRequests.get(projectPath) === request) {
+      inFlightBranchStatusRequests.delete(projectPath);
+    }
+  });
+  inFlightBranchStatusRequests.set(projectPath, request);
   return request;
 }
 
@@ -259,7 +273,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   fetchBranchStatus: async (projectPath: string) => {
     try {
-      const branchStatus = await invoke<GitBranchStatus>("git_branch_status", { projectPath });
+      const branchStatus = await invokeGitBranchStatus(projectPath);
       // 仅当仍是当前项目时写入，避免切换项目时的竞态覆盖。
       if (get().currentProjectPath === projectPath) {
         set({ branchStatus });

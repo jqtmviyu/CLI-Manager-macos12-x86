@@ -241,6 +241,7 @@ const DEFAULT_COLLAPSED_DIRECTORY_NAME_SET = new Set(
 const SEARCH_DEBOUNCE_MS = 220;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequestSeq = 0;
+const inFlightGitChangeRequests = new Map<string, Promise<GitFileChange[]>>();
 
 export function isDefaultCollapsedDirectoryName(name: string): boolean {
   return DEFAULT_COLLAPSED_DIRECTORY_NAME_SET.has(name.toLowerCase());
@@ -349,11 +350,18 @@ async function listDir(rootPath: string, path: string): Promise<ProjectFileEntry
 }
 
 async function fetchGitChanges(projectPath: string): Promise<GitFileChange[]> {
-  try {
-    return await invoke<GitFileChange[]>("git_get_changes", { projectPath });
-  } catch {
-    return [];
-  }
+  const existing = inFlightGitChangeRequests.get(projectPath);
+  if (existing) return existing;
+
+  const request = invoke<GitFileChange[]>("git_get_changes", { projectPath })
+    .catch(() => [])
+    .finally(() => {
+      if (inFlightGitChangeRequests.get(projectPath) === request) {
+        inFlightGitChangeRequests.delete(projectPath);
+      }
+    });
+  inFlightGitChangeRequests.set(projectPath, request);
+  return request;
 }
 
 function isSameOrChildPath(path: string, targetPath: string): boolean {
