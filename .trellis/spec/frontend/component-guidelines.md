@@ -265,6 +265,71 @@ function buildSplitLayout(node: TerminalPaneNode, rect: Rect): { leaves: LeafLay
 - [ ] Divider drag resizing still works; nested splits resize correctly.
 - [ ] Pane tab switching and session activation unchanged.
 
+### Convention: Terminal resize drag uses local or DOM preview, then commits once
+
+**What**: For terminal split dividers and terminal-side resizable panels, the drag interaction must update only a local preview during `mousemove` and commit the final width/ratio to React/Zustand state on `mouseup`. Do not write heavy global state or rerender embedded stats / git panels on every drag frame.
+
+**Why**: Terminal panes contain xterm, realtime stats, and git views. Writing `paneTree` or panel width state every frame causes the whole terminal shell or panel subtree to rerender during drag, which makes width adjustment feel sticky and unsmooth.
+
+**Correct**:
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  pendingWidthRef.current = nextWidth;
+  if (frameRef.current === null) {
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      panelRef.current!.style.width = `${pendingWidthRef.current}px`;
+    });
+  }
+};
+
+const onUp = () => {
+  const finalWidth = pendingWidthRef.current ?? widthRef.current;
+  setWidth(finalWidth);
+  localStorage.setItem(storageKey, String(finalWidth));
+};
+```
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  latestRatio = clampSplitRatio(rawRatio);
+  if (rafId === null) {
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      setDragPreview({ splitId, ratio: latestRatio });
+    });
+  }
+};
+
+const onUp = () => {
+  setDragPreview(null);
+  setSplitRatio(splitId, latestRatio);
+};
+```
+
+**Wrong**:
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  setWidth(nextWidth);
+};
+```
+
+```tsx
+const onMove = (event: MouseEvent) => {
+  setSplitRatio(splitId, nextRatio);
+};
+```
+
+**Contracts**:
+
+- Drag preview may use local component state or direct DOM width updates, but the persistent width/ratio source of truth updates once on drag end.
+- For split panes, keep pane content component identity stable while only wrapper geometry changes.
+- For terminal-side panels, avoid rerendering `TerminalStatsPanel` / `GitChangesPanel` on every mousemove.
+
+**Tests**: Run `npx tsc --noEmit`; manually verify split drag, stats panel drag, and git panel drag remain smooth while persisted width/ratio still survives reopen.
+
 ### Convention: Git tree compresses consecutive single-child directory chains at render time
 
 **What**: In `GitTreeNodeComponent`, when rendering a directory node, walk consecutive single-child directory chains and compress them into a single display row showing the top directory name plus a weakened path suffix (JetBrains style).

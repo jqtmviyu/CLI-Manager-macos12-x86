@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/shallow";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -1241,6 +1241,8 @@ function PaneLeafView({
   );
 }
 
+const MemoPaneLeafView = memo(PaneLeafView);
+
 function PaneContentDropZones({ paneId, activeDropPreview }: { paneId: string; activeDropPreview?: PaneDropPreview }) {
   const centerDrop = useDroppable({ id: `${PANE_CENTER_DROP_PREFIX}${paneId}` });
   const leftDrop = useDroppable({ id: `${PANE_EDGE_DROP_PREFIX}${paneId}:left` });
@@ -2125,7 +2127,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   ]);
 
   const renderLeaf = useCallback((pane: TerminalPaneLeaf) => (
-    <PaneLeafView
+    <MemoPaneLeafView
       key={pane.id}
       pane={pane}
       sessions={sessions}

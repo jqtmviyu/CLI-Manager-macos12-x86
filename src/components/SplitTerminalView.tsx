@@ -1,6 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useTerminalStore } from "../stores/terminalStore";
-import type { TerminalPaneLeaf, TerminalPaneNode, TerminalPaneSplit } from "../stores/terminalPaneTree";
+import { clampSplitRatio, type TerminalPaneLeaf, type TerminalPaneNode, type TerminalPaneSplit } from "../stores/terminalPaneTree";
 
 interface Props {
   node: TerminalPaneNode;
@@ -32,19 +32,24 @@ interface SplitLayout {
 }
 
 const DIVIDER_SIZE = 4;
+interface DragPreviewState {
+  splitId: string;
+  ratio: number;
+}
 
 function clampSize(value: number): number {
   return Math.max(0, value);
 }
 
-function buildSplitLayout(node: TerminalPaneNode, rect: Rect): SplitLayout {
+function buildSplitLayout(node: TerminalPaneNode, rect: Rect, dragPreview: DragPreviewState | null): SplitLayout {
   if (node.type === "leaf") {
     return { leaves: [{ leaf: node, rect }], dividers: [] };
   }
 
   const isHorizontal = node.direction === "horizontal";
   const totalLength = isHorizontal ? rect.width : rect.height;
-  const firstLength = clampSize(totalLength * node.ratio - DIVIDER_SIZE / 2);
+  const ratio = dragPreview?.splitId === node.id ? dragPreview.ratio : node.ratio;
+  const firstLength = clampSize(totalLength * ratio - DIVIDER_SIZE / 2);
   const secondLength = clampSize(totalLength - firstLength - DIVIDER_SIZE);
 
   const firstRect: Rect = isHorizontal
@@ -57,8 +62,8 @@ function buildSplitLayout(node: TerminalPaneNode, rect: Rect): SplitLayout {
     ? { left: dividerRect.left + DIVIDER_SIZE, top: rect.top, width: secondLength, height: rect.height }
     : { left: rect.left, top: dividerRect.top + DIVIDER_SIZE, width: rect.width, height: secondLength };
 
-  const firstLayout = buildSplitLayout(node.first, firstRect);
-  const secondLayout = buildSplitLayout(node.second, secondRect);
+  const firstLayout = buildSplitLayout(node.first, firstRect, dragPreview);
+  const secondLayout = buildSplitLayout(node.second, secondRect, dragPreview);
 
   return {
     leaves: [...firstLayout.leaves, ...secondLayout.leaves],
@@ -79,6 +84,7 @@ export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props)
   const setSplitRatio = useTerminalStore((s) => s.setSplitRatio);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerRect, setContainerRect] = useState<Rect>({ left: 0, top: 0, width: 0, height: 0 });
+  const [dragPreview, setDragPreview] = useState<DragPreviewState | null>(null);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -104,7 +110,7 @@ export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props)
     return () => resizeObserver.disconnect();
   }, []);
 
-  const layout = useMemo(() => buildSplitLayout(node, containerRect), [containerRect, node]);
+  const layout = useMemo(() => buildSplitLayout(node, containerRect, dragPreview), [containerRect, dragPreview, node]);
   const fullscreenLeaf = fullscreenLeafId
     ? layout.leaves.find(({ leaf }) => leaf.id === fullscreenLeafId)
     : null;
@@ -123,18 +129,23 @@ export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props)
 
       const flush = () => {
         rafId = null;
-        setSplitRatio(split.id, latestRatio);
+        setDragPreview((current) => (
+          current?.splitId === split.id && current.ratio === latestRatio
+            ? current
+            : { splitId: split.id, ratio: latestRatio }
+        ));
       };
 
       const onMove = (ev: globalThis.MouseEvent) => {
-        latestRatio = isHorizontal
+        latestRatio = clampSplitRatio(isHorizontal
           ? (ev.clientX - rootRect.left - splitRect.left) / splitRect.width
-          : (ev.clientY - rootRect.top - splitRect.top) / splitRect.height;
+          : (ev.clientY - rootRect.top - splitRect.top) / splitRect.height);
         if (rafId === null) rafId = requestAnimationFrame(flush);
       };
 
       const onUp = () => {
         if (rafId !== null) cancelAnimationFrame(rafId);
+        setDragPreview(null);
         setSplitRatio(split.id, latestRatio);
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
@@ -146,6 +157,7 @@ export function SplitTerminalView({ node, renderLeaf, fullscreenLeafId }: Props)
       document.addEventListener("mouseup", onUp);
       document.body.style.cursor = isHorizontal ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
+      setDragPreview({ splitId: split.id, ratio: split.ratio });
     },
     [setSplitRatio]
   );

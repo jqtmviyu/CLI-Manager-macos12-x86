@@ -25,6 +25,10 @@ type IdFactory = () => string;
 const MIN_SPLIT_RATIO = 0.2;
 const MAX_SPLIT_RATIO = 0.8;
 
+export function clampSplitRatio(ratio: number): number {
+  return Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, ratio));
+}
+
 export function createPaneLeaf(id: string, sessionIds: string[] = [], activeSessionId: string | null = null): TerminalPaneLeaf {
   const active = activeSessionId && sessionIds.includes(activeSessionId) ? activeSessionId : sessionIds[0] ?? null;
   return { type: "leaf", id, sessionIds, activeSessionId: active };
@@ -306,7 +310,7 @@ export function unsplitPaneLeaf(
 
 export function resizePaneSplit(tree: TerminalPaneNode | null, splitId: string, ratio: number): TerminalPaneNode | null {
   if (!tree) return null;
-  const clamped = Math.max(MIN_SPLIT_RATIO, Math.min(MAX_SPLIT_RATIO, ratio));
+  const clamped = clampSplitRatio(ratio);
   if (tree.type === "split" && tree.id === splitId) return { ...tree, ratio: clamped };
   if (tree.type === "leaf") return tree;
   return { ...tree, first: resizePaneSplit(tree.first, splitId, ratio) ?? tree.first, second: resizePaneSplit(tree.second, splitId, ratio) ?? tree.second };

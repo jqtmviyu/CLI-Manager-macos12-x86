@@ -63,6 +63,7 @@ export function ResizableTerminalPanelFrame({
   const [width, setWidth] = useState(() => readStoredWidth(storageKey, defaultWidth, minWidth, maxWidth));
   const [dragging, setDragging] = useState(false);
   const widthRef = useRef(width);
+  const panelRef = useRef<HTMLElement | null>(null);
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(defaultWidth);
   const pendingWidthRef = useRef<number | null>(null);
@@ -70,6 +71,12 @@ export function ResizableTerminalPanelFrame({
 
   useEffect(() => {
     widthRef.current = width;
+  }, [width]);
+
+  useEffect(() => {
+    if (panelRef.current) {
+      panelRef.current.style.width = `${width}px`;
+    }
   }, [width]);
 
   useEffect(() => {
@@ -82,7 +89,9 @@ export function ResizableTerminalPanelFrame({
 
     const commitPendingWidth = () => {
       if (pendingWidthRef.current === null) return;
-      setWidth(pendingWidthRef.current);
+      if (panelRef.current) {
+        panelRef.current.style.width = `${pendingWidthRef.current}px`;
+      }
       frameRef.current = null;
     };
 
@@ -100,6 +109,9 @@ export function ResizableTerminalPanelFrame({
       }
       const finalWidth = clampWidth(pendingWidthRef.current ?? widthRef.current, minWidth, maxWidth);
       pendingWidthRef.current = null;
+      if (panelRef.current) {
+        panelRef.current.style.width = `${finalWidth}px`;
+      }
       setWidth(finalWidth);
       window.localStorage.setItem(storageKey, String(finalWidth));
       setDragging(false);
@@ -131,6 +143,7 @@ export function ResizableTerminalPanelFrame({
 
   return (
     <aside
+      ref={panelRef}
       className="relative flex shrink-0 flex-col overflow-hidden border-l border-border font-mono"
       style={{ width, minWidth, maxWidth, backgroundColor: TERM.bg }}
     >
