@@ -17,6 +17,7 @@ export interface Project {
   startup_cmd: string;
   env_vars: string;
   shell: string;
+  provider_overrides: string;
   created_at: string;
   updated_at: string;
 }
@@ -30,6 +31,7 @@ export interface CreateProjectInput {
   startup_cmd?: string;
   env_vars?: string;
   shell?: string;
+  provider_overrides?: string;
 }
 
 export interface UpdateProjectInput {
@@ -42,6 +44,7 @@ export interface UpdateProjectInput {
   startup_cmd?: string;
   env_vars?: string;
   shell?: string;
+  provider_overrides?: string;
 }
 
 export interface CreateGroupInput {

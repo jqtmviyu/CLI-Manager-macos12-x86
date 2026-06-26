@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { Project } from "../lib/types";
+import { getCodexProviderOverride, getProviderSwitchAppType, withCodexProviderOverride } from "../lib/providerSwitching";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
 import { Dialog, DialogContent, DialogTitle } from "./ui/dialog";
@@ -10,7 +11,7 @@ import { ProviderBadge, type ProviderBadgeTone } from "./provider/ProviderRow";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { logError } from "../lib/logger";
 
-interface ClaudeProvider {
+interface CcSwitchProvider {
   id: string;
   appType: string;
   name: string;
@@ -18,11 +19,13 @@ interface ClaudeProvider {
   baseUrl: string | null;
   isCurrent: boolean;
   configParseError: boolean;
+  model: string | null;
+  apiFormat: string | null;
 }
 
 interface ProvidersResponse {
   dbPath: string;
-  providers: ClaudeProvider[];
+  providers: CcSwitchProvider[];
 }
 
 interface ProjectProviderProbe {
@@ -30,6 +33,12 @@ interface ProjectProviderProbe {
   hasSettingsFile: boolean;
   baseUrl: string | null;
   localOverrideKeys: string[];
+}
+
+interface CodexProviderProfileResponse {
+  providerId: string;
+  providerName: string;
+  profileName: string;
 }
 
 /** applyingId 的哨兵值：标记"恢复跟随全局"操作进行中 */
@@ -40,9 +49,12 @@ const ERROR_HINTS: Record<string, string> = {
   unsupported_format: "cc-switch 数据库路径不是 .db 文件，请到 设置 → 供应商 重新选择。",
   project_not_found: "项目目录不存在或不可访问，请检查项目路径。",
   provider_not_found: "该供应商在 cc-switch 数据库中已不存在，请关闭弹窗后重试。",
+  "provider_config_invalid: missing_codex_base_url": "该 Codex 供应商缺少 base_url / OPENAI_BASE_URL 等端点配置，CLI-Manager 无法生成 profile；不需要手动创建文件，请先在 cc-switch 中补全该供应商的 Codex 端点。",
+  "provider_config_invalid: missing_codex_api_key": "该 Codex 供应商缺少 API key / token，CLI-Manager 无法注入启动环境；不需要手动创建文件，请先在 cc-switch 中补全密钥。",
   provider_config_invalid: "该供应商配置解析失败，无法应用。",
   settings_parse_failed: "项目 .claude/settings.json 不是合法 JSON，文件未被修改，请先手动修复。",
   settings_write_failed: "写入 settings.json 失败，请检查目录权限。",
+  profile_write_failed: "写入 Codex profile 失败，请检查 Codex 配置目录权限。",
 };
 
 function formatError(error: unknown): string {
@@ -58,12 +70,24 @@ type SwitchBadge = {
   tone: ProviderBadgeTone;
 };
 
-function inferProviderVendor(provider: ClaudeProvider): VendorKey | null {
+function inferProviderVendor(provider: CcSwitchProvider): VendorKey | null {
   return (
+    inferVendor(provider.model) ??
     inferVendor(provider.baseUrl) ??
     inferVendor(provider.appType) ??
     inferVendor(provider.name) ??
     inferVendor(provider.category)
+  );
+}
+
+function providerVendorHint(provider: CcSwitchProvider): string | null {
+  return (
+    inferProviderVendor(provider) ??
+    provider.model ??
+    provider.baseUrl ??
+    provider.category ??
+    provider.name ??
+    null
   );
 }
 
@@ -158,15 +182,30 @@ function ProviderSwitchListButton({
   );
 }
 
+function buildCodexProbe(project: Project): ProjectProviderProbe {
+  const override = getCodexProviderOverride(project);
+  return {
+    matchedProviderId: override?.providerId ?? null,
+    hasSettingsFile: true,
+    baseUrl: override ? "codex-profile" : null,
+    localOverrideKeys: [],
+  };
+}
+
 interface Props {
   project: Project;
   onClose: () => void;
 }
 
 export function ProviderSwitchModal({ project, onClose }: Props) {
+  const appType = getProviderSwitchAppType(project);
   const ccSwitchDbPath = useSettingsStore((s) => s.ccSwitchDbPath);
-  const [providers, setProviders] = useState<ClaudeProvider[]>([]);
+  const codexConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
+  const [providers, setProviders] = useState<CcSwitchProvider[]>([]);
   const [probe, setProbe] = useState<ProjectProviderProbe | null>(null);
+  const [activeCodexProfileName, setActiveCodexProfileName] = useState<string | null>(
+    () => getCodexProviderOverride(project)?.profileName ?? null
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
@@ -175,20 +214,31 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     setLoading(true);
     setError(null);
     try {
+      if (!appType) {
+        setProviders([]);
+        setProbe(null);
+        setError("当前项目 CLI 工具不支持供应商切换。");
+        return;
+      }
       const dbPath = ccSwitchDbPath ?? undefined;
       const [listRes, probeRes] = await Promise.all([
         invoke<ProvidersResponse>("ccswitch_list_providers", { dbPath }),
-        invoke<ProjectProviderProbe>("ccswitch_get_project_provider", {
-          projectPath: project.path,
-          dbPath,
-        }).catch((err): ProjectProviderProbe | null => {
-          // 探测失败不阻塞供应商列表展示；真正的错误在切换时再呈现
-          logError("ccswitch project provider probe failed", { path: project.path, err });
-          return null;
-        }),
+        appType === "claude"
+          ? invoke<ProjectProviderProbe>("ccswitch_get_project_provider", {
+              projectPath: project.path,
+              dbPath,
+            }).catch((err): ProjectProviderProbe | null => {
+              // 探测失败不阻塞供应商列表展示；真正的错误在切换时再呈现
+              logError("ccswitch project provider probe failed", { path: project.path, err });
+              return null;
+            })
+          : Promise.resolve(buildCodexProbe(project)),
       ]);
-      setProviders(listRes.providers.filter((p) => p.appType === "claude"));
+      setProviders(listRes.providers.filter((p) => p.appType === appType));
       setProbe(probeRes);
+      if (appType === "codex") {
+        setActiveCodexProfileName(getCodexProviderOverride(project)?.profileName ?? null);
+      }
     } catch (err) {
       setProviders([]);
       setProbe(null);
@@ -196,25 +246,53 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [ccSwitchDbPath, project.path]);
+  }, [appType, ccSwitchDbPath, project]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const applyProvider = async (provider: ClaudeProvider) => {
-    if (applyingId) return;
+  const applyProvider = async (provider: CcSwitchProvider) => {
+    if (applyingId || !appType) return;
     setApplyingId(provider.id);
+    let shouldReload = true;
     try {
-      await invoke("ccswitch_apply_provider", {
-        projectPath: project.path,
-        providerId: provider.id,
-        dbPath: ccSwitchDbPath ?? undefined,
-      });
-      toast.success("已切换供应商", {
-        description: `${provider.name} 已写入 .claude/settings.json，新开终端后生效。`,
-      });
-      await load();
+      if (appType === "claude") {
+        await invoke("ccswitch_apply_provider", {
+          projectPath: project.path,
+          providerId: provider.id,
+          dbPath: ccSwitchDbPath ?? undefined,
+        });
+        toast.success("已切换供应商", {
+          description: `${provider.name} 已写入 .claude/settings.json，新开终端后生效。`,
+        });
+      } else {
+        const result = await invoke<CodexProviderProfileResponse>("ccswitch_prepare_codex_provider", {
+          providerId: provider.id,
+          dbPath: ccSwitchDbPath ?? undefined,
+          codexConfigDir: codexConfigDir ?? undefined,
+        });
+        await useProjectStore.getState().updateProject(project.id, {
+          provider_overrides: withCodexProviderOverride(project.provider_overrides, {
+            providerId: result.providerId,
+            providerName: result.providerName,
+            profileName: result.profileName,
+            vendorHint: providerVendorHint(provider),
+          }),
+        });
+        setProbe({
+          matchedProviderId: result.providerId,
+          hasSettingsFile: true,
+          baseUrl: "codex-profile",
+          localOverrideKeys: [],
+        });
+        setActiveCodexProfileName(result.profileName);
+        shouldReload = false;
+        toast.success("已切换供应商", {
+          description: `${provider.name} 已生成 Codex profile，新开内部终端后生效。`,
+        });
+      }
+      if (shouldReload) await load();
       void useProjectStore.getState().refreshProviderBadges();
     } catch (err) {
       toast.error("切换供应商失败", { description: formatError(err) });
@@ -224,14 +302,24 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
   };
 
   const resetToGlobal = async () => {
-    if (applyingId) return;
+    if (applyingId || !appType) return;
     setApplyingId(RESET_APPLYING_ID);
+    let shouldReload = true;
     try {
-      await invoke("ccswitch_reset_project_provider", { projectPath: project.path });
+      if (appType === "claude") {
+        await invoke("ccswitch_reset_project_provider", { projectPath: project.path });
+      } else {
+        await useProjectStore.getState().updateProject(project.id, {
+          provider_overrides: withCodexProviderOverride(project.provider_overrides, null),
+        });
+        setProbe(buildCodexProbe({ ...project, provider_overrides: withCodexProviderOverride(project.provider_overrides, null) }));
+        setActiveCodexProfileName(null);
+        shouldReload = false;
+      }
       toast.success("已恢复跟随全局", {
         description: "已移除项目级供应商配置，新开终端后生效。",
       });
-      await load();
+      if (shouldReload) await load();
       void useProjectStore.getState().refreshProviderBadges();
     } catch (err) {
       toast.error("恢复全局失败", { description: formatError(err) });
@@ -240,11 +328,12 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
     }
   };
 
-  // baseUrl 非空即代表项目存在供应商覆盖；探测失败（probe 为 null）时不打勾
-  const hasOverride = probe?.baseUrl != null;
+  // Claude 以 baseUrl 判断项目 env 覆盖；Codex 以 matchedProviderId 判断项目 profile 覆盖。
+  const hasOverride = probe != null && (probe.baseUrl != null || probe.matchedProviderId != null);
   const followGlobal = probe != null && !hasOverride;
   const globalCurrentName = providers.find((p) => p.isCurrent)?.name ?? null;
-  const localOverrideKeys = probe?.localOverrideKeys ?? [];
+  const localOverrideKeys = appType === "claude" ? probe?.localOverrideKeys ?? [] : [];
+  const hasCustomCodexStartup = appType === "codex" && project.startup_cmd.trim().length > 0;
 
   return (
     <Dialog
@@ -275,6 +364,15 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           </div>
         )}
 
+        {!loading && hasCustomCodexStartup && probe?.matchedProviderId && (
+          <div className="mb-3 flex items-start gap-1.5 rounded border border-warning/40 bg-warning/10 px-2 py-1.5 text-xs text-text-secondary">
+            <AlertTriangle size={14} strokeWidth={1.5} className="mt-0.5 shrink-0 text-warning" />
+            <span className="min-w-0 break-all">
+              该 Codex 项目配置了自定义启动命令，CLI-Manager 不会自动改写；请手动在启动命令中加入 --profile {activeCodexProfileName ?? "cli-manager-..."}。
+            </span>
+          </div>
+        )}
+
         {loading && (
           <div className="py-6 text-center text-sm text-text-muted">加载中…</div>
         )}
@@ -289,7 +387,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
               }}
               icon={<Database size={18} strokeWidth={2.1} />}
               name="跟随全局供应商"
-              subtitle={globalCurrentName ? `当前全局：${globalCurrentName}` : "cc-switch 未设置全局当前供应商"}
+              subtitle={globalCurrentName ? `当前全局：${globalCurrentName}` : `cc-switch 未设置 ${appType ?? "当前 CLI"} 全局当前供应商`}
               trailing={
                 applyingId === RESET_APPLYING_ID ? (
                   <span className="text-xs text-text-muted">恢复中…</span>
@@ -301,7 +399,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           </div>
         )}
 
-        {!loading && !error && hasOverride && probe?.matchedProviderId == null && (
+        {!loading && !error && appType === "claude" && hasOverride && probe?.matchedProviderId == null && (
           <p className="mb-2 text-xs text-text-muted">
             项目为自定义配置（未匹配到 cc-switch 供应商）。
           </p>
@@ -309,7 +407,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
 
         {!loading && !error && providers.length === 0 && (
           <div className="py-6 text-center text-sm text-text-muted">
-            cc-switch 中没有 claude 供应商。
+            cc-switch 中没有 {appType ?? "当前 CLI"} 供应商。
           </div>
         )}
 
@@ -348,7 +446,7 @@ export function ProviderSwitchModal({ project, onClose }: Props) {
           </div>
         )}
 
-        {!loading && probe && !probe.hasSettingsFile && (
+        {!loading && appType === "claude" && probe && !probe.hasSettingsFile && (
           <p className="mt-3 text-xs text-text-muted">
             该项目暂无 .claude/settings.json，切换时将自动创建。
           </p>

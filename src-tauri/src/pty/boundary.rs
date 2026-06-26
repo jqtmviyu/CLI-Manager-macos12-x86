@@ -100,7 +100,7 @@ fn parse_esc_sequence(seq: &[u8]) -> Option<usize> {
                     return match seq.get(j + 1) {
                         Some(&b'\\') => Some(j + 2),
                         Some(_) => Some(j), // 内嵌 ESC（源端格式错误），在此切断让外层 ESC 单独处理
-                        None => None,        // 末尾 bare ESC，等待下一字节
+                        None => None,       // 末尾 bare ESC，等待下一字节
                     };
                 }
                 j += 1;
@@ -268,12 +268,13 @@ mod tests {
     #[test]
     fn stress_random_split_reconstructs_original() {
         // 构造一段含 ANSI + CJK + Emoji + ASCII 的真实样本
-        let original: Vec<u8> = b"\x1b[31m[ERROR]\x1b[0m \xe6\xb5\x8b\xe8\xaf\x95 emoji \xf0\x9f\x98\x80\n\
+        let original: Vec<u8> =
+            b"\x1b[31m[ERROR]\x1b[0m \xe6\xb5\x8b\xe8\xaf\x95 emoji \xf0\x9f\x98\x80\n\
             \x1b]0;tab title\x07normal text\n\
             \x1b[1;33mYellow\x1b[0m \xe4\xb8\xad\xe6\x96\x87 done\n"
-            .iter()
-            .copied()
-            .collect();
+                .iter()
+                .copied()
+                .collect();
 
         // 用一个简单的 LCG 取代外部 rand 依赖
         let mut state: u32 = 0x12345678;

@@ -262,9 +262,10 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             return Self::resolve_shell(shell);
         }
         match shell {
-            "powershell" if cfg!(target_os = "windows") => {
-                Ok(("powershell.exe".to_string(), Self::powershell_runtime_monitor_args()))
-            }
+            "powershell" if cfg!(target_os = "windows") => Ok((
+                "powershell.exe".to_string(),
+                Self::powershell_runtime_monitor_args(),
+            )),
             "pwsh" => {
                 let exe = if cfg!(target_os = "windows") {
                     "pwsh.exe"

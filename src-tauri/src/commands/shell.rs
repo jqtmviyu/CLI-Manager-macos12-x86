@@ -100,7 +100,12 @@ fn unix_shell_exe(shell: Option<&str>) -> &'static str {
 fn build_unix_terminal_command(tab: &ExternalTab) -> String {
     let shell = unix_shell_exe(tab.shell.as_deref());
     let mut parts: Vec<String> = Vec::new();
-    if let Some(cwd) = tab.cwd.as_deref().map(str::trim).filter(|cwd| !cwd.is_empty()) {
+    if let Some(cwd) = tab
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+    {
         parts.push(format!("cd {}", escape_posix_single_quoted(cwd)));
     }
     if let Some(cmd) = trimmed_startup_cmd(tab) {
@@ -194,7 +199,16 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
         let command = escape_applescript_string(&build_unix_terminal_command(tab));
         let do_script = format!("do script \"{command}\"");
         let status = Command::new("osascript")
-            .args(["-e", "tell application \"Terminal\"", "-e", "activate", "-e", &do_script, "-e", "end tell"])
+            .args([
+                "-e",
+                "tell application \"Terminal\"",
+                "-e",
+                "activate",
+                "-e",
+                &do_script,
+                "-e",
+                "end tell",
+            ])
             .status()
             .map_err(|e| {
                 error!("Failed to open Terminal.app: {}", e);
@@ -234,7 +248,10 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
                 "xfce4-terminal",
                 vec!["-x".into(), "sh".into(), "-lc".into(), command.clone()],
             ),
-            ("xterm", vec!["-e".into(), "sh".into(), "-lc".into(), command]),
+            (
+                "xterm",
+                vec!["-e".into(), "sh".into(), "-lc".into(), command],
+            ),
         ];
         let mut last_err: Option<std::io::Error> = None;
         let mut opened = false;

@@ -65,6 +65,11 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
     const isMultiSelected = actions.selectedProjectIds.has(p.id);
     const status = actions.getProjectStatus(p.id);
     const pathInvalid = actions.isPathInvalid(p.id);
+    const providerBadge = actions.providerBadges[p.id];
+    const providerName = providerBadge?.providerName?.trim() || t("sidebar.tree.customProvider");
+    const providerVendor = providerBadge
+      ? inferVendor(providerBadge.vendorHint) ?? inferVendor(providerBadge.providerName)
+      : null;
     const cliVendor = p.cli_tool ? inferVendor(p.cli_tool) : null;
 
     return (
@@ -101,6 +106,16 @@ function TreeNodeItemImpl({ node, depth, density, focusedNodeKey, onFocusNode }:
           </span>
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="block truncate font-medium">{p.name}</span>
+            {providerBadge && (
+              <span
+                className="ui-tree-meta-chip ui-tree-provider-chip inline-flex max-w-[104px] shrink-0 items-center gap-1 truncate rounded-full px-1.5 py-0.5 text-[10px] leading-none"
+                title={t("sidebar.tree.providerBadge", { name: providerName })}
+                aria-label={t("sidebar.tree.providerBadge", { name: providerName })}
+              >
+                {providerVendor && <VendorIcon vendor={providerVendor} size={10} />}
+                <span className="truncate">{providerName}</span>
+              </span>
+            )}
             {pathInvalid && (
               <span
                 className="ui-tree-warning-chip inline-flex shrink-0 items-center justify-center rounded-full"

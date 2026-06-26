@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { logError } from "../lib/logger";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
+import { parseProjectEnvVars } from "../lib/providerSwitching";
 
 export const useCommandPaletteStore = create<{
   isOpen: boolean;
@@ -151,26 +152,21 @@ export function CommandPalette() {
         description: p.path,
         category: "项目",
         action: () => {
-          const cmd = resolveProjectStartupCommand(p);
           const shell = p.shell && p.shell !== "powershell" ? p.shell : undefined;
           if (viewMode === "compact") {
             void openWindowsTerminal([{
               cwd: p.path,
               title: p.cli_tool ? `${p.name} (${p.cli_tool})` : p.name,
-              startupCmd: cmd,
+              startupCmd: resolveProjectStartupCommand(p, { includeCodexProviderProfile: false }),
               shell: p.shell || undefined,
             }]);
             return;
           }
-          let envVars: Record<string, string> | undefined;
-          try {
-            const parsed = JSON.parse(p.env_vars || "{}");
-            if (Object.keys(parsed).length > 0) envVars = parsed;
-          } catch { /* ignore */ }
+          const envVars = parseProjectEnvVars(p);
           createSession(
             p.id, p.path,
             p.cli_tool ? `${p.name} (${p.cli_tool})` : p.name,
-            cmd, envVars, shell,
+            resolveProjectStartupCommand(p), envVars, shell,
           );
         },
       });

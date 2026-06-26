@@ -543,3 +543,37 @@ Implemented #51: history session resume button, cwd detail payload, resume termi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: codex project provider switching
+
+**Date**: 2026-06-26
+**Task**: codex project provider switching
+**Branch**: `master`
+
+### Summary
+
+Add project-level Codex provider switching with generated profiles, cleanup, sidebar provider badges, and V1.2.0 changelog entry.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `71b3f3b` | (see git log) |
+| `19598e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

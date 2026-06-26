@@ -41,7 +41,10 @@ pub fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
     }
 
     // 剥离前缀，得到 `<distro>\<rest>`
-    let after_prefix = if normalized.to_ascii_lowercase().starts_with("\\\\wsl.localhost\\") {
+    let after_prefix = if normalized
+        .to_ascii_lowercase()
+        .starts_with("\\\\wsl.localhost\\")
+    {
         &normalized["\\\\wsl.localhost\\".len()..]
     } else {
         &normalized["\\\\wsl$\\".len()..]
@@ -140,7 +143,10 @@ mod tests {
     fn linux_to_unc_roundtrip() {
         let linux = "/home/venti/.claude/projects";
         let unc = linux_to_unc_wsl_path(linux, "Ubuntu");
-        assert_eq!(unc, "\\\\wsl.localhost\\Ubuntu\\home\\venti\\.claude\\projects");
+        assert_eq!(
+            unc,
+            "\\\\wsl.localhost\\Ubuntu\\home\\venti\\.claude\\projects"
+        );
     }
 
     #[test]

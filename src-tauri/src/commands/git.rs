@@ -37,16 +37,20 @@ fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, String> {
     let result = unsafe {
         git2::opts::set_verify_owner_validation(false)
             .map_err(|e| format!("设置 git2 选项失败: {e}"))
-            .and_then(|_| {
-                Repository::open(path).map_err(|e| format!("打开 WSL Git 仓库失败: {e}"))
-            })
+            .and_then(|_| Repository::open(path).map_err(|e| format!("打开 WSL Git 仓库失败: {e}")))
     };
     // 立即恢复所有权验证
     let _ = unsafe { git2::opts::set_verify_owner_validation(true) };
 
     match &result {
-        Ok(_) => log::info!("[git:wsl] 关闭所有权验证后 Git 仓库打开成功: path={}", path.to_string_lossy()),
-        Err(e) => log::warn!("[git:wsl] 关闭所有权验证后仍失败: path={} error={e}", path.to_string_lossy()),
+        Ok(_) => log::info!(
+            "[git:wsl] 关闭所有权验证后 Git 仓库打开成功: path={}",
+            path.to_string_lossy()
+        ),
+        Err(e) => log::warn!(
+            "[git:wsl] 关闭所有权验证后仍失败: path={} error={e}",
+            path.to_string_lossy()
+        ),
     }
     result
 }
@@ -218,7 +222,11 @@ pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>,
         log::info!(
             "[git_get_changes] 查询完成，返回 {} 个变更文件 line_stats={} elapsed_ms={}",
             changes.len(),
-            if skipped_line_stats { "skipped" } else { "computed" },
+            if skipped_line_stats {
+                "skipped"
+            } else {
+                "computed"
+            },
             started_at.elapsed().as_millis()
         );
         Ok(changes)
@@ -290,7 +298,11 @@ fn git_get_changes_wsl(
     log::info!(
         "[git_get_changes:wsl] 查询完成，返回 {} 个变更文件 line_stats={} elapsed_ms={}",
         changes.len(),
-        if skipped_line_stats { "skipped" } else { "computed" },
+        if skipped_line_stats {
+            "skipped"
+        } else {
+            "computed"
+        },
         started_at.elapsed().as_millis()
     );
     Ok(changes)
@@ -306,9 +318,7 @@ fn run_wsl_git(distro: &str, linux_path: &str, git_args: &[&str]) -> Result<Vec<
     cmd.args(["-d", distro, "--exec", "git", "-C", linux_path]);
     cmd.args(git_args);
 
-    let output = cmd
-        .output()
-        .map_err(|e| format!("spawn_failed: {e}"))?;
+    let output = cmd.output().map_err(|e| format!("spawn_failed: {e}"))?;
     if output.status.success() {
         return Ok(output.stdout);
     }
@@ -394,10 +404,7 @@ fn parse_porcelain_status(x: u8, y: u8) -> (&'static str, bool) {
 }
 
 fn is_porcelain_conflict(x: u8, y: u8) -> bool {
-    x == b'U'
-        || y == b'U'
-        || (x == b'A' && y == b'A')
-        || (x == b'D' && y == b'D')
+    x == b'U' || y == b'U' || (x == b'A' && y == b'A') || (x == b'D' && y == b'D')
 }
 
 fn map_porcelain_status_byte(status: u8) -> &'static str {
@@ -535,7 +542,11 @@ fn compute_wsl_diff_line_stats(
     linux_path: &str,
 ) -> Result<std::collections::HashMap<String, (i32, i32)>, String> {
     let started_at = std::time::Instant::now();
-    let stdout = run_wsl_git(distro, linux_path, &["diff", "--numstat", "-z", "HEAD", "--"])?;
+    let stdout = run_wsl_git(
+        distro,
+        linux_path,
+        &["diff", "--numstat", "-z", "HEAD", "--"],
+    )?;
     let stats = parse_wsl_numstat(&stdout);
     log::info!(
         "[git_get_changes:wsl] diff numstat 完成 files={} elapsed_ms={}",
@@ -1784,7 +1795,9 @@ mod tests {
 
     #[test]
     fn skips_diff_line_stats_only_after_status_limit() {
-        assert!(!should_skip_diff_line_stats(GIT_DIFF_LINE_STATS_STATUS_LIMIT));
+        assert!(!should_skip_diff_line_stats(
+            GIT_DIFF_LINE_STATS_STATUS_LIMIT
+        ));
         assert!(should_skip_diff_line_stats(
             GIT_DIFF_LINE_STATS_STATUS_LIMIT + 1
         ));

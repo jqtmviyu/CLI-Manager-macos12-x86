@@ -1,6 +1,7 @@
 import { createContext, useContext, type MouseEvent as ReactMouseEvent } from "react";
 import type { DragEndEvent } from "@dnd-kit/core";
 import type { Project } from "../../lib/types";
+import type { ProviderBadge } from "../../stores/projectStore";
 import type { SessionStatus } from "../../stores/terminalStore";
 
 export interface TreeActions {
@@ -9,6 +10,7 @@ export interface TreeActions {
   newGroupParentId: string | null;
   collapsedIds: Set<string>;
   renamingGroupId: string | null;
+  providerBadges: Record<string, ProviderBadge>;
   onSelectProject: (e: ReactMouseEvent, p: Project) => void;
   onSelectProjectByKeyboard: (p: Project) => void;
   onOpenProject: (p: Project) => void;

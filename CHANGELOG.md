@@ -2,6 +2,13 @@
 
 ## [V1.2.0] - 2026-06-25
 
+### Codex 项目级供应商切换
+
+- **Codex 项目级供应商切换**：支持对 `cli_tool = "codex"` 的项目选择 `app_type = "codex"` 供应商；项目级覆盖写入 CLI-Manager 自身的 `provider_overrides`，不再误写项目 `.codex/config.toml`。
+- **启动时自动注入 Codex profile**：为选中的 Codex 供应商生成 `$CODEX_HOME/cli-manager-*.config.toml`，内部终端启动 `codex` 项目时自动追加 `--profile`，并通过 PTY 环境变量注入密钥，避免把 secret 落盘到 profile 或命令行。
+- **生成 profile 自动清理**：当项目恢复跟随全局、删除项目或更换供应商后，CLI-Manager 会清理未再被任何项目引用的 `cli-manager-*.config.toml`，但不会删除用户自己维护的 Codex profile。
+- **项目树供应商徽标恢复**：Claude 与 Codex 的项目级供应商徽标统一走 `providerBadges` 数据流，项目树重新显示对应厂商 SVG，不再退化成纯文字标签。
+
 ### 终端分屏
 
 - **分屏 Pane 全屏/还原**：多 Pane 布局下每个 Pane 标签栏新增全屏按钮，点击后当前 Pane 进入与沉浸式全屏一致的放大状态；再次点击缩小按钮可恢复进入前的分屏布局，Pane 位置与比例保持不变。[#56](https://github.com/dark-hxx/CLI-Manager/issues/56)

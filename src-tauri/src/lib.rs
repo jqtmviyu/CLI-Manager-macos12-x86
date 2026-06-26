@@ -191,6 +191,12 @@ fn migrations() -> Vec<Migration> {
             ",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 12,
+            description: "add_provider_overrides_to_projects",
+            sql: "ALTER TABLE projects ADD COLUMN provider_overrides TEXT NOT NULL DEFAULT '{}';",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -360,6 +366,8 @@ pub fn run() {
             commands::ccswitch::ccswitch_get_project_provider,
             commands::ccswitch::ccswitch_apply_provider,
             commands::ccswitch::ccswitch_reset_project_provider,
+            commands::ccswitch::ccswitch_prepare_codex_provider,
+            commands::ccswitch::ccswitch_cleanup_codex_profiles,
             commands::ccswitch::ccswitch_probe_projects,
             commands::ccswitch::ccswitch_list_common_configs,
             commands::git::get_current_git_branch,

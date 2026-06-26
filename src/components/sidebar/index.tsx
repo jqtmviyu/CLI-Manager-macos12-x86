@@ -13,6 +13,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import { ProviderSwitchModal } from "../ProviderSwitchModal";
 import { openWindowsTerminal } from "../../lib/externalTerminal";
 import { resolveProjectStartupCommand } from "../../lib/projectStartupCommand";
+import { getProviderSwitchAppType, parseProjectEnvVars } from "../../lib/providerSwitching";
 import { TreeContext, type TreeActions } from "./TreeContext";
 import { Portal } from "../ui/Portal";
 import { toast } from "sonner";
@@ -72,15 +73,7 @@ function resolveHistorySourceFilter(cliTool: string | null | undefined): History
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
   const title = project.cli_tool ? `${project.name} (${project.cli_tool})` : project.name;
-  let envVars: Record<string, string> | undefined;
-  try {
-    const parsed = JSON.parse(project.env_vars || "{}");
-    if (typeof parsed === "object" && parsed !== null && Object.keys(parsed).length > 0) {
-      envVars = parsed as Record<string, string>;
-    }
-  } catch {
-    // ignore invalid env json
-  }
+  const envVars = parseProjectEnvVars(project);
 
   return {
     projectId: project.id,
@@ -99,12 +92,14 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
     projects,
     groups,
     projectHealth,
+    providerBadges,
   } = useProjectStore(
     useShallow((s) => ({
       tree: s.tree,
       projects: s.projects,
       groups: s.groups,
       projectHealth: s.projectHealth,
+      providerBadges: s.providerBadges,
     }))
   );
   const fetchAll = useProjectStore((s) => s.fetchAll);
@@ -576,7 +571,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       items.map((project) => ({
         cwd: project.path,
         title: project.cli_tool ? `${project.name} (${project.cli_tool})` : project.name,
-        startupCmd: resolveProjectStartupCommand(project),
+        startupCmd: resolveProjectStartupCommand(project, { includeCodexProviderProfile: false }),
         shell: project.shell || undefined,
       }))
     );
@@ -824,6 +819,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       newGroupParentId,
       collapsedIds,
       renamingGroupId,
+      providerBadges,
       onSelectProject: handleSelectProject,
       onSelectProjectByKeyboard: handleSelectProjectByKeyboard,
       onOpenProject: handleOpen,
@@ -847,6 +843,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
       newGroupParentId,
       collapsedIds,
       renamingGroupId,
+      providerBadges,
       handleSelectProject,
       handleSelectProjectByKeyboard,
       handleOpen,
@@ -1096,7 +1093,7 @@ export function Sidebar({ onOpenSettings, onOpenStats, compactMode = false }: Si
                   <ListClockIcon size={14} />
                   {t("sidebar.menu.sessionHistory")}
                 </button>
-                {contextMenu.project.cli_tool.toLowerCase().includes("claude") && (
+                {getProviderSwitchAppType(contextMenu.project) && (
                   <button
                     className="context-menu-item"
                     role="menuitem"

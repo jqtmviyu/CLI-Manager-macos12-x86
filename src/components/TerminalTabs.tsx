@@ -43,6 +43,7 @@ import { SubagentTranscriptView } from "./terminal/SubagentTranscriptView";
 import { FileEditorPane } from "./files/FileEditorPane";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
+import { parseProjectEnvVars } from "../lib/providerSwitching";
 import { Terminal, Plus, ListClockIcon, X, Copy, Maximize2, Minimize2, ChevronDown, ChevronRight, BarChart3, GitBranch, Folder, Check } from "./icons";
 import { VendorIcon, inferVendor, type VendorKey } from "./VendorIcon";
 import { EmptyState } from "./ui/EmptyState";
@@ -255,20 +256,6 @@ function resolveHistorySourceFilter(cliTool: string | null | undefined): History
 // 终端 Tab 厂商图标：从启动命令 + 标题推断（未配自定义启动命令时 startupCmd 即为 cli_tool）
 function inferSessionVendor(session: TerminalSession): VendorKey | null {
   return inferVendor(`${session.startupCmd ?? ""} ${session.title}`);
-}
-
-function parseProjectEnvVars(project?: Project): Record<string, string> | undefined {
-  if (!project) return undefined;
-  try {
-    const parsed = JSON.parse(project.env_vars || "{}");
-    if (typeof parsed === "object" && parsed !== null) {
-      const entries = Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[1] === "string");
-      if (entries.length > 0) return Object.fromEntries(entries);
-    }
-  } catch {
-    // ignore invalid env json
-  }
-  return undefined;
 }
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {

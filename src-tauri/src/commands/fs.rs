@@ -88,7 +88,10 @@ pub async fn check_paths_exist(paths: Vec<String>) -> Result<Vec<bool>, String> 
 }
 
 #[tauri::command]
-pub async fn file_list_dir(root_path: String, relative_path: String) -> Result<Vec<FileEntry>, String> {
+pub async fn file_list_dir(
+    root_path: String,
+    relative_path: String,
+) -> Result<Vec<FileEntry>, String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
         let dir = resolve_existing_path(&root, &relative_path)?;
@@ -100,13 +103,20 @@ pub async fn file_list_dir(root_path: String, relative_path: String) -> Result<V
         for item in fs::read_dir(&dir).map_err(|err| format!("read_dir_failed: {err}"))? {
             let entry = item.map_err(|err| format!("read_dir_entry_failed: {err}"))?;
             let path = entry.path();
-            let metadata = entry.metadata().map_err(|err| format!("metadata_failed: {err}"))?;
+            let metadata = entry
+                .metadata()
+                .map_err(|err| format!("metadata_failed: {err}"))?;
             let name = entry.file_name().to_string_lossy().to_string();
             let rel = relative_from_root(&root, &path)?;
             entries.push(FileEntry {
                 name,
                 path: rel,
-                kind: if metadata.is_dir() { "directory" } else { "file" }.into(),
+                kind: if metadata.is_dir() {
+                    "directory"
+                } else {
+                    "file"
+                }
+                .into(),
                 size_bytes: metadata.len(),
                 modified_ms: metadata
                     .modified()
@@ -146,7 +156,10 @@ pub async fn file_search(root_path: String, query: String) -> Result<Vec<FileEnt
 }
 
 #[tauri::command]
-pub async fn file_search_content(root_path: String, query: String) -> Result<Vec<ContentSearchMatch>, String> {
+pub async fn file_search_content(
+    root_path: String,
+    query: String,
+) -> Result<Vec<ContentSearchMatch>, String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
         let needle = query.trim().to_lowercase();
@@ -163,7 +176,10 @@ pub async fn file_search_content(root_path: String, query: String) -> Result<Vec
 }
 
 #[tauri::command]
-pub async fn file_read_text(root_path: String, relative_path: String) -> Result<TextFilePayload, String> {
+pub async fn file_read_text(
+    root_path: String,
+    relative_path: String,
+) -> Result<TextFilePayload, String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
         let path = resolve_existing_path(&root, &relative_path)?;
@@ -186,7 +202,10 @@ pub async fn file_read_text(root_path: String, relative_path: String) -> Result<
 }
 
 #[tauri::command]
-pub async fn file_read_image(root_path: String, relative_path: String) -> Result<ImageFilePayload, String> {
+pub async fn file_read_image(
+    root_path: String,
+    relative_path: String,
+) -> Result<ImageFilePayload, String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
         let path = resolve_existing_path(&root, &relative_path)?;
@@ -271,7 +290,9 @@ pub async fn file_rename(
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
         let source = resolve_existing_path(&root, &relative_path)?;
-        let parent = source.parent().ok_or_else(|| "missing_parent".to_string())?;
+        let parent = source
+            .parent()
+            .ok_or_else(|| "missing_parent".to_string())?;
         let target = resolve_child_target(&root, parent, &new_name)?;
         move_path(&root, &source, &target, overwrite)
     })
@@ -396,7 +417,9 @@ fn resolve_target_path(root: &Path, relative_path: &str) -> Result<PathBuf, Stri
         return Err("empty_target_path".into());
     }
     let target = root.join(relative_path);
-    let parent = target.parent().ok_or_else(|| "missing_parent".to_string())?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| "missing_parent".to_string())?;
     ensure_existing_child_within_root(root, parent)?;
     Ok(target)
 }
@@ -490,7 +513,12 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
 }
 
 fn image_mime_type(path: &Path) -> Option<&'static str> {
-    match path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase())?.as_str() {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())?
+        .as_str()
+    {
         "jpg" | "jpeg" => Some("image/jpeg"),
         "png" => Some("image/png"),
         "gif" => Some("image/gif"),
@@ -567,7 +595,9 @@ fn collect_search_matches(
         let file_type = entry
             .file_type()
             .map_err(|err| format!("file_type_failed: {err}"))?;
-        let metadata = entry.metadata().map_err(|err| format!("metadata_failed: {err}"))?;
+        let metadata = entry
+            .metadata()
+            .map_err(|err| format!("metadata_failed: {err}"))?;
         let name = entry.file_name().to_string_lossy().to_string();
         if file_type.is_dir() && should_skip_search_dir(&name) {
             continue;
@@ -577,7 +607,12 @@ fn collect_search_matches(
             out.push(FileEntry {
                 name: name.clone(),
                 path: rel,
-                kind: if file_type.is_dir() { "directory" } else { "file" }.into(),
+                kind: if file_type.is_dir() {
+                    "directory"
+                } else {
+                    "file"
+                }
+                .into(),
                 size_bytes: metadata.len(),
                 modified_ms: metadata
                     .modified()
@@ -624,7 +659,9 @@ fn collect_content_matches(
         if !file_type.is_file() || should_skip_content_file(&path) {
             continue;
         }
-        let metadata = entry.metadata().map_err(|err| format!("metadata_failed: {err}"))?;
+        let metadata = entry
+            .metadata()
+            .map_err(|err| format!("metadata_failed: {err}"))?;
         if metadata.len() > CONTENT_SEARCH_MAX_FILE_BYTES {
             continue;
         }
@@ -694,17 +731,32 @@ mod tests {
 
     #[test]
     fn validate_relative_path_rejects_escape_and_absolute_paths() {
-        assert_eq!(validate_relative_path("../secret").unwrap_err(), "path_contains_parent_segment");
-        assert_eq!(validate_relative_path("src\\main.ts").unwrap_err(), "path_contains_backslash");
-        assert_eq!(validate_relative_path("/etc/passwd").unwrap_err(), "path_is_absolute");
+        assert_eq!(
+            validate_relative_path("../secret").unwrap_err(),
+            "path_contains_parent_segment"
+        );
+        assert_eq!(
+            validate_relative_path("src\\main.ts").unwrap_err(),
+            "path_contains_backslash"
+        );
+        assert_eq!(
+            validate_relative_path("/etc/passwd").unwrap_err(),
+            "path_is_absolute"
+        );
     }
 
     #[test]
     fn validate_child_name_rejects_separators_and_empty_names() {
         assert!(validate_child_name("main.ts").is_ok());
         assert_eq!(validate_child_name("").unwrap_err(), "empty_name");
-        assert_eq!(validate_child_name("a/b").unwrap_err(), "name_contains_separator");
-        assert_eq!(validate_child_name("a\\b").unwrap_err(), "name_contains_separator");
+        assert_eq!(
+            validate_child_name("a/b").unwrap_err(),
+            "name_contains_separator"
+        );
+        assert_eq!(
+            validate_child_name("a\\b").unwrap_err(),
+            "name_contains_separator"
+        );
         assert_eq!(validate_child_name("..").unwrap_err(), "invalid_name");
     }
 
@@ -797,7 +849,11 @@ mod tests {
         collect_content_matches(&root, &root, "target", &mut matches).unwrap();
 
         assert_eq!(matches.len(), 2);
-        assert!(matches.iter().any(|item| item.path == "src/main.ts" && item.line_number == 1));
-        assert!(matches.iter().any(|item| item.path == "src/other.ts" && item.line_number == 1));
+        assert!(matches
+            .iter()
+            .any(|item| item.path == "src/main.ts" && item.line_number == 1));
+        assert!(matches
+            .iter()
+            .any(|item| item.path == "src/other.ts" && item.line_number == 1));
     }
 }

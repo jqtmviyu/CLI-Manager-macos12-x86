@@ -226,8 +226,7 @@ const HISTORY_STATS_DAILY_INDEX_CACHE_MAX: usize = 16;
 static SESSION_STATS_CACHE: OnceLock<Mutex<SessionStatsCache>> = OnceLock::new();
 static SESSION_PROJECT_CACHE: OnceLock<Mutex<SessionProjectCache>> = OnceLock::new();
 static SESSION_FILES_CACHE: OnceLock<Mutex<SessionFilesCache>> = OnceLock::new();
-static WSL_SESSION_FINGERPRINT_CACHE: OnceLock<Mutex<WslSessionFingerprintCache>> =
-    OnceLock::new();
+static WSL_SESSION_FINGERPRINT_CACHE: OnceLock<Mutex<WslSessionFingerprintCache>> = OnceLock::new();
 static HISTORY_STATS_AGGREGATION_CACHE: OnceLock<Mutex<HistoryStatsAggregationCache>> =
     OnceLock::new();
 static HISTORY_STATS_DAILY_INDEX_CACHE: OnceLock<Mutex<HistoryStatsDailyIndexCache>> =
@@ -1182,8 +1181,7 @@ fn build_history_stats_response(
     let mut seen_source_sessions: HashSet<String> = HashSet::new();
     let mut seen_model_sessions: HashSet<String> = HashSet::new();
     let mut seen_day_sessions: HashSet<String> = HashSet::new();
-    let mut seen_hour_sessions: Vec<HashSet<String>> =
-        (0..24).map(|_| HashSet::new()).collect();
+    let mut seen_hour_sessions: Vec<HashSet<String>> = (0..24).map(|_| HashSet::new()).collect();
 
     for day_idx in 0..bounds.range_days {
         let day_start = bounds.start_day + day_idx as i64 * DAY_MS;
@@ -1327,9 +1325,7 @@ fn build_history_stats_response(
             if seen_model_sessions.insert(model_session_key) {
                 model_entry.sessions += 1;
             }
-            model_entry.input_tokens = model_entry
-                .input_tokens
-                .saturating_add(stats.input_tokens);
+            model_entry.input_tokens = model_entry.input_tokens.saturating_add(stats.input_tokens);
             model_entry.output_tokens = model_entry
                 .output_tokens
                 .saturating_add(stats.output_tokens);
@@ -1852,7 +1848,9 @@ fn load_persisted_history_index(roots: &HistoryRoots) -> Option<HistorySessionIn
     })
 }
 
-fn history_index_entries_by_path(index: &HistorySessionIndex) -> HashMap<String, HistoryIndexEntry> {
+fn history_index_entries_by_path(
+    index: &HistorySessionIndex,
+) -> HashMap<String, HistoryIndexEntry> {
     index
         .entries
         .iter()
@@ -1861,7 +1859,9 @@ fn history_index_entries_by_path(index: &HistorySessionIndex) -> HashMap<String,
         .collect()
 }
 
-fn cached_history_index_entries(roots: &HistoryRoots) -> Option<HashMap<String, HistoryIndexEntry>> {
+fn cached_history_index_entries(
+    roots: &HistoryRoots,
+) -> Option<HashMap<String, HistoryIndexEntry>> {
     if let Ok(index) = get_history_index().read() {
         if index.roots.eq(roots) && !index.entries.is_empty() {
             return Some(history_index_entries_by_path(&index));
@@ -2240,8 +2240,8 @@ fn get_or_scan_session_computation_with_fingerprint(
     fingerprint: SessionFileFingerprint,
     indexed_entry: Option<&HistoryIndexEntry>,
 ) -> CachedSessionComputation {
-    if let Some(computed) = indexed_entry
-        .and_then(|entry| indexed_computation_from_entry(file_ref, fingerprint, entry))
+    if let Some(computed) =
+        indexed_entry.and_then(|entry| indexed_computation_from_entry(file_ref, fingerprint, entry))
     {
         return computed;
     }
@@ -2738,7 +2738,11 @@ fn wsl_command_text(program: &str, args: &[&str]) -> Result<(String, String), St
     if !output.status.success() {
         return Err(format!(
             "wsl command failed (exit {}): {}",
-            output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string()),
+            output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".to_string()),
             stderr.trim()
         ));
     }
@@ -2764,11 +2768,16 @@ fn wsl_find_session_files(
     // 导致 find 无法执行。转义 glob 通配符避免 shell 展开。
     let escaped_pattern = name_pattern.replace('*', "\\*");
     let args = [
-        "-d", distro,
-        "find", linux_dir,
-        "-name", &escaped_pattern,
-        "-type", "f",
-        "-printf", "%p\t%s\t%T@\n",
+        "-d",
+        distro,
+        "find",
+        linux_dir,
+        "-name",
+        &escaped_pattern,
+        "-type",
+        "f",
+        "-printf",
+        "%p\t%s\t%T@\n",
     ];
     info!(
         "[wsl] 枚举会话文件: wsl.exe -d {distro} find {linux_dir} -name '{name_pattern}' -type f"
@@ -2781,7 +2790,11 @@ fn wsl_find_session_files(
             let mut total_lines = 0usize;
             let mut skipped_lines = 0usize;
             let mut files = Vec::new();
-            for line in stdout.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            for line in stdout
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+            {
                 total_lines += 1;
                 if let Some(hit) = parse_wsl_find_session_file_line(line, project_key_from_path) {
                     files.push(hit);
@@ -2891,7 +2904,11 @@ fn wsl_session_fingerprint(linux_path: &str, distro: &str) -> SessionFileFingerp
             let size: u64 = parts[0].parse().unwrap_or(0);
             let mtime: i64 = parts[1].parse().unwrap_or(0);
             let ctime: i64 = parts[2].parse().unwrap_or(0);
-            let created_at = if ctime > 0 { ctime * 1000 } else { mtime * 1000 };
+            let created_at = if ctime > 0 {
+                ctime * 1000
+            } else {
+                mtime * 1000
+            };
 
             SessionFileFingerprint {
                 created_at,
@@ -2934,7 +2951,7 @@ fn codex_project_key_from_wsl_linux_path(linux_path: &str, linux_root: &str) -> 
     let normalized = linux_path.trim_end_matches('/').replace('\\', "/");
     let root_normalized = linux_root.trim_end_matches('/').replace('\\', "/");
     // sessions/<project_key>/ 或 sessions/<project_key>/<sub>/rollout-xxx.jsonl
-    if let Some(tail) = normalized.strip_prefix(&format!("{root_normalized}/", )) {
+    if let Some(tail) = normalized.strip_prefix(&format!("{root_normalized}/",)) {
         if let Some(rel) = tail.split('/').next() {
             if !rel.is_empty() {
                 return rel.to_string();
@@ -2956,7 +2973,10 @@ fn collect_wsl_claude_session_files(linux_projects_dir: &str, distro: &str) -> V
             let linux_path = hit.linux_path;
             let unc = crate::wsl::linux_to_unc_wsl_path(&linux_path, distro);
             remember_wsl_session_fingerprint(&unc, hit.fingerprint);
-            debug!("[wsl] Claude session: project_key={} path={unc}", hit.project_key);
+            debug!(
+                "[wsl] Claude session: project_key={} path={unc}",
+                hit.project_key
+            );
             SessionFileRef {
                 source: "claude".to_string(),
                 project_key: hit.project_key,
@@ -2973,9 +2993,12 @@ fn collect_wsl_claude_session_files(linux_projects_dir: &str, distro: &str) -> V
 
 fn collect_wsl_codex_session_files(linux_sessions_dir: &str, distro: &str) -> Vec<SessionFileRef> {
     info!("[wsl] 开始扫描 Codex 会话: distro={distro} sessions_dir={linux_sessions_dir}");
-    let results = wsl_find_session_files(linux_sessions_dir, distro, "rollout-*.jsonl", &|linux_path| {
-        codex_project_key_from_wsl_linux_path(linux_path, linux_sessions_dir)
-    });
+    let results = wsl_find_session_files(
+        linux_sessions_dir,
+        distro,
+        "rollout-*.jsonl",
+        &|linux_path| codex_project_key_from_wsl_linux_path(linux_path, linux_sessions_dir),
+    );
 
     let files: Vec<_> = results
         .into_iter()
@@ -2983,7 +3006,10 @@ fn collect_wsl_codex_session_files(linux_sessions_dir: &str, distro: &str) -> Ve
             let linux_path = hit.linux_path;
             let unc = crate::wsl::linux_to_unc_wsl_path(&linux_path, distro);
             remember_wsl_session_fingerprint(&unc, hit.fingerprint);
-            debug!("[wsl] Codex session: project_key={} path={unc}", hit.project_key);
+            debug!(
+                "[wsl] Codex session: project_key={} path={unc}",
+                hit.project_key
+            );
             SessionFileRef {
                 source: "codex".to_string(),
                 project_key: hit.project_key,
@@ -3147,14 +3173,22 @@ fn detect_home_dir() -> Option<PathBuf> {
         env::var_os("USERPROFILE")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .or_else(|| env::var_os("HOME").filter(|value| !value.is_empty()).map(PathBuf::from))
+            .or_else(|| {
+                env::var_os("HOME")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
     }
     #[cfg(not(target_os = "windows"))]
     {
         env::var_os("HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .or_else(|| env::var_os("USERPROFILE").filter(|value| !value.is_empty()).map(PathBuf::from))
+            .or_else(|| {
+                env::var_os("USERPROFILE")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
     }
 }
 
@@ -3186,8 +3220,8 @@ fn session_matches_project_path(file_ref: &SessionFileRef, target_project_path: 
     // 目录，任一命中即视为同项目。target_project_path 已被 normalize_history_path 归一化。
     let wsl_target = crate::wsl::windows_path_to_wsl(target_project_path);
     // WSL UNC 路径（\\wsl.localhost\...）也需要转成 Linux 形式做 project_key 匹配。
-    let wsl_unc_linux_target = crate::wsl::parse_wsl_unc_path(target_project_path)
-        .map(|(_distro, linux_path)| linux_path);
+    let wsl_unc_linux_target =
+        crate::wsl::parse_wsl_unc_path(target_project_path).map(|(_distro, linux_path)| linux_path);
 
     if let Some(ref linux_path) = wsl_unc_linux_target {
         debug!(
@@ -3577,7 +3611,10 @@ fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let mut message_index = 0usize;
     let mut seen_call_ids: HashSet<String> = HashSet::new();
 
-    for line in BufReader::with_capacity(READ_BUF_CAPACITY, file).lines().map_while(Result::ok) {
+    for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
+        .lines()
+        .map_while(Result::ok)
+    {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -3935,11 +3972,17 @@ fn collect_tool_events_from_value(
 
     if let Some(payload) = value.get("payload") {
         let payload_type = payload.get("type").and_then(Value::as_str);
-        if matches!(payload_type, Some("function_call") | Some("custom_tool_call")) {
+        if matches!(
+            payload_type,
+            Some("function_call") | Some("custom_tool_call")
+        ) {
             let Some(name) = payload.get("name").and_then(Value::as_str) else {
                 return;
             };
-            let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_string);
+            let call_id = payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             if !mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
                 return;
             }
@@ -3962,7 +4005,10 @@ fn collect_tool_events_from_value(
         }
 
         if payload_type == Some("function_call_output") {
-            let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_string);
+            let call_id = payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             let output_summary = payload.get("output").and_then(summarize_json_value);
             update_tool_event_output(events, call_id.as_deref(), output_summary, None);
             return;
@@ -3972,7 +4018,10 @@ fn collect_tool_events_from_value(
             .map(|kind| kind.starts_with("mcp_tool_call"))
             .unwrap_or(false)
         {
-            let call_id = payload.get("call_id").and_then(Value::as_str).map(str::to_string);
+            let call_id = payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             let duration_ms = extract_tool_duration_ms(payload);
             let status = if payload_type == Some("mcp_tool_call_end") {
                 Some("completed")
@@ -3984,7 +4033,10 @@ fn collect_tool_events_from_value(
 
             if let Some(invocation) = payload.get("invocation") {
                 if let Some(server) = invocation.get("server").and_then(Value::as_str) {
-                    let name = invocation.get("tool").and_then(Value::as_str).unwrap_or(server);
+                    let name = invocation
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .unwrap_or(server);
                     if mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
                         events.push(make_tool_event(
                             call_id.clone(),
@@ -4678,8 +4730,7 @@ fn title_candidate_from_lines(text: &str) -> Option<String> {
             if is_title_noise_block_tag(&tag) {
                 index += 1;
                 if !title_line_closes_tag(trimmed, &tag) {
-                    while index < lines.len() && !title_line_closes_tag(lines[index].trim(), &tag)
-                    {
+                    while index < lines.len() && !title_line_closes_tag(lines[index].trim(), &tag) {
                         index += 1;
                     }
                     if index < lines.len() {
@@ -4996,7 +5047,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(hit.linux_path, "/home/me/.claude/projects/proj/session.jsonl");
+        assert_eq!(
+            hit.linux_path,
+            "/home/me/.claude/projects/proj/session.jsonl"
+        );
         assert_eq!(hit.project_key, "proj");
         assert_eq!(hit.fingerprint.size, 42);
         assert_eq!(hit.fingerprint.updated_at, 1_719_234_567_250);

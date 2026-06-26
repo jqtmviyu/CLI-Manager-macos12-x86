@@ -290,7 +290,10 @@ fn wsl_command_text(distro: &str, args: &[&str]) -> Result<(String, String), Str
     run_wsl_command(cmd, &program)
 }
 
-fn run_wsl_command(mut cmd: std::process::Command, program: &str) -> Result<(String, String), String> {
+fn run_wsl_command(
+    mut cmd: std::process::Command,
+    program: &str,
+) -> Result<(String, String), String> {
     let output = cmd
         .output()
         .map_err(|err| format!("wsl command '{program}' failed: {err}"))?;
@@ -327,13 +330,8 @@ fn resolve_wsl_transcript_path(
     distro: String,
 ) -> Result<String, String> {
     let linux_home = wsl_home_dir(&distro)?;
-    let resolved = derive_wsl_unc_transcript_path(
-        &linux_home,
-        &cwd,
-        &session_id,
-        &agent_id,
-        &distro,
-    );
+    let resolved =
+        derive_wsl_unc_transcript_path(&linux_home, &cwd, &session_id, &agent_id, &distro);
     info!(
         "[subagent_transcript:wsl] derived transcript path: distro={distro} cwd={cwd} sessionId={session_id} agentId={agent_id} path={resolved}"
     );
@@ -418,13 +416,8 @@ pub async fn subagent_transcript_subscribe(
     if key.trim().is_empty() {
         return Err("missing_key".to_string());
     }
-    let path = resolve_transcript_path(
-        transcript_path,
-        cwd,
-        session_id,
-        agent_id,
-        wsl_distro_name,
-    )?;
+    let path =
+        resolve_transcript_path(transcript_path, cwd, session_id, agent_id, wsl_distro_name)?;
     info!("[subagent_transcript] subscribe resolved path: key={key} path={path}");
     bridge.subscribe(app_handle, key, path)
 }
@@ -521,14 +514,15 @@ fn discover_wsl_subagent_files(
         "-printf",
         "%f\n",
     ];
-    info!(
-        "[subagent_transcript:wsl] discover dir: distro={distro} dir={subagents_dir}"
-    );
+    info!("[subagent_transcript:wsl] discover dir: distro={distro} dir={subagents_dir}");
 
     match wsl_command_text(distro, &args) {
         Ok((stdout, stderr)) => {
             if !stderr.trim().is_empty() {
-                warn!("[subagent_transcript:wsl] discover stderr: {}", stderr.trim());
+                warn!(
+                    "[subagent_transcript:wsl] discover stderr: {}",
+                    stderr.trim()
+                );
             }
             let files: Vec<String> = stdout
                 .lines()
@@ -664,7 +658,10 @@ mod tests {
         fs::write(&path, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n").unwrap();
         let (content, next_offset, shrank) = read_new_lines(&path, offset).unwrap();
         assert_eq!(content, "{\"c\":3}\n");
-        assert_eq!(next_offset as usize, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n".len());
+        assert_eq!(
+            next_offset as usize,
+            "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n".len()
+        );
         assert!(!shrank);
 
         let _ = fs::remove_file(path);

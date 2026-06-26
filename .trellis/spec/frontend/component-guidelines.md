@@ -181,6 +181,46 @@ const hooks = { label: "Hook 设置", searchPlaceholder: "搜索 Hook 设置（�
 
 **Tests**: After changing settings search behavior, run `npx tsc --noEmit` and manually verify searchable tabs still filter while static tabs do not show a search input.
 
+### Convention: Project provider badges flow through sidebar tree context
+
+**What**: Project-level provider badge rendering must consume `projectStore.providerBadges` through the sidebar tree context and render in `TreeNodeItem`. Badge data is produced by the store, not recomputed in individual tree rows.
+
+**Why**: Provider switching has multiple adapters: Claude badges are probed by the backend from `.claude/settings.json`, while Codex badges come from `project.provider_overrides.codex`. Keeping both sources normalized in `projectStore.providerBadges` prevents sidebar rows from duplicating provider-specific logic and avoids regressions where switching succeeds but the project tree chip disappears.
+
+**Correct**:
+
+```tsx
+// Sidebar root subscribes once and passes the normalized map through context.
+const { tree, providerBadges } = useProjectStore(useShallow((s) => ({
+  tree: s.tree,
+  providerBadges: s.providerBadges,
+})));
+
+<TreeContext.Provider value={{ ...treeActions, providerBadges }}>
+  <ProjectTree tree={tree} />
+</TreeContext.Provider>
+
+// TreeNodeItem reads providerBadges[project.id] and renders the existing chip.
+```
+
+**Wrong**:
+
+```tsx
+// Do not probe cc-switch or parse provider_overrides inside every tree row.
+const badge = await invoke("ccswitch_probe_projects", { projectPaths: [project.path] });
+```
+
+**Contracts**:
+
+- `projectStore.refreshProviderBadges()` is the single refresh point for provider badge data.
+- Claude project badges come from backend `ccswitch_probe_projects` and preserve the previous `.claude/settings.json` behavior.
+- Codex project badges come from `provider_overrides.codex` and must not trigger cc-switch DB reads per row.
+- Badge chips must preserve the provider/vendor icon SVG when `inferVendor(providerName)` can infer one; do not regress to text-only chips.
+- Rows with an override but no matched provider name use the localized custom-provider fallback.
+- After applying or resetting a provider in `ProviderSwitchModal`, call `refreshProviderBadges()` so the tree chip updates without requiring an app restart.
+
+**Tests**: Run `npx tsc --noEmit`; manually switch a Claude provider and a Codex provider and verify the project tree chip appears/clears immediately and after a fresh `fetchAll()`.
+
 ### Convention: Terminal tab drag uses overlay plus explicit pane drop zones
 
 **What**: Terminal tab drag interactions use dnd-kit `DragOverlay` for the cursor-following tab, while pane movement/splitting is driven by explicit drop ids:
