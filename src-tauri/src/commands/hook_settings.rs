@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Row, SqliteConnection};
 use tauri::AppHandle;
@@ -1398,10 +1398,7 @@ fn codex_hook_state_event_name(event: &str) -> Option<&'static str> {
     }
 }
 
-fn extract_codex_hook_state_blocks(
-    config: &str,
-    expected_keys: &[String],
-) -> Vec<Vec<String>> {
+fn extract_codex_hook_state_blocks(config: &str, expected_keys: &[String]) -> Vec<Vec<String>> {
     let lines: Vec<&str> = config.lines().collect();
     let mut blocks = Vec::new();
     let mut index = 0;
@@ -2079,12 +2076,10 @@ mod tests {
         assert!(hooks_json.contains("--event SubagentStart"));
         assert!(hooks_json.contains("--event SubagentStop"));
         assert!(!hooks_json.contains(".ps1"));
-        assert!(
-            !codex_dir
-                .join("hooks")
-                .join(CODEX_ATTENTION_SCRIPT_NAME)
-                .is_file()
-        );
+        assert!(!codex_dir
+            .join("hooks")
+            .join(CODEX_ATTENTION_SCRIPT_NAME)
+            .is_file());
     }
 
     #[tokio::test]
@@ -2252,11 +2247,9 @@ mod tests {
             &value["hooks"]["Stop"],
             "echo keep"
         ));
-        assert!(
-            !serde_json::to_string(&value)
-                .unwrap()
-                .contains(HOOK_COMMAND_MARKER)
-        );
+        assert!(!serde_json::to_string(&value)
+            .unwrap()
+            .contains(HOOK_COMMAND_MARKER));
     }
 
     #[test]

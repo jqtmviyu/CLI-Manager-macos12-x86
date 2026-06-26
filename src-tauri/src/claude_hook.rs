@@ -313,10 +313,7 @@ fn log_hook_payload_diagnostic(payload: &ClaudeHookRequest) {
     );
 
     // AgentTool 事件详细诊断：记录完整 payload JSON 以定位 Claude Code 实际字段。
-    if matches!(
-        payload.event.as_str(),
-        "AgentToolStart" | "AgentToolStop"
-    ) {
+    if matches!(payload.event.as_str(), "AgentToolStart" | "AgentToolStop") {
         if let Ok(full_json) = serde_json::to_string_pretty(payload) {
             info!(
                 "[agent_tool_diagnostic] {} full payload:\n{}",
