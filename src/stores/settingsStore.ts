@@ -77,6 +77,7 @@ export interface TerminalToolbarVisibilitySettings {
   commandHistory: boolean;
   fullscreen: boolean;
   sessionHistory: boolean;
+  files: boolean;
   stats: boolean;
   gitChanges: boolean;
   showText: boolean;
@@ -240,6 +241,7 @@ const DEFAULTS: Settings = {
     commandHistory: true,
     fullscreen: true,
     sessionHistory: true,
+    files: true,
     stats: true,
     gitChanges: true,
     showText: false,
@@ -248,7 +250,7 @@ const DEFAULTS: Settings = {
     stats: true,
     gitChanges: true,
   },
-  terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "gitChanges", "stats"],
+  terminalToolbarOrder: ["new", "templates", "commandHistory", "fullscreen", "sessionHistory", "files", "gitChanges", "stats"],
   terminalSidePanelMerged: true,
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
@@ -383,6 +385,7 @@ export function migrateTerminalToolbarVisibility(value: unknown): TerminalToolba
     commandHistory: typeof raw.commandHistory === "boolean" ? raw.commandHistory : defaults.commandHistory,
     fullscreen: typeof raw.fullscreen === "boolean" ? raw.fullscreen : defaults.fullscreen,
     sessionHistory: typeof raw.sessionHistory === "boolean" ? raw.sessionHistory : defaults.sessionHistory,
+    files: typeof raw.files === "boolean" ? raw.files : defaults.files,
     stats: typeof raw.stats === "boolean" ? raw.stats : defaults.stats,
     gitChanges: typeof raw.gitChanges === "boolean" ? raw.gitChanges : defaults.gitChanges,
     showText: typeof raw.showText === "boolean" ? raw.showText : defaults.showText,

@@ -21,6 +21,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useTerminalStore, type SplitTerminalOptions, type TabNotificationState } from "../stores/terminalStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useProjectStore } from "../stores/projectStore";
+import { isProjectFileDirty, useFileExplorerStore } from "../stores/fileExplorerStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
 import { logError } from "../lib/logger";
 import type { TerminalPaneDropEdge, TerminalPaneLeaf, TerminalPaneSplitDirection } from "../stores/terminalPaneTree";
@@ -33,6 +34,8 @@ import { TerminalStatsPanel } from "./terminal/TerminalStatsPanel";
 import {
   ResizableTerminalPanelFrame,
   TerminalSidePanel,
+  TERMINAL_FILES_PANEL_DEFAULT_WIDTH,
+  TERMINAL_FILES_PANEL_WIDTH_STORAGE_KEY,
   TERMINAL_GIT_PANEL_DEFAULT_WIDTH,
   TERMINAL_GIT_PANEL_WIDTH_STORAGE_KEY,
   TERMINAL_STATS_PANEL_DEFAULT_WIDTH,
@@ -41,6 +44,7 @@ import {
 } from "./terminal/TerminalSidePanel";
 import { SubagentTranscriptView } from "./terminal/SubagentTranscriptView";
 import { FileEditorPane } from "./files/FileEditorPane";
+import { FileExplorerSidebar } from "./files/FileExplorerSidebar";
 import { openWindowsTerminal } from "../lib/externalTerminal";
 import { normalizeDirectCodexStartupCommand, resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseProjectEnvVars } from "../lib/providerSwitching";
@@ -256,6 +260,58 @@ function resolveHistorySourceFilter(cliTool: string | null | undefined): History
 // 终端 Tab 厂商图标：从启动命令 + 标题推断（未配自定义启动命令时 startupCmd 即为 cli_tool）
 function inferSessionVendor(session: TerminalSession): VendorKey | null {
   return inferVendor(`${session.startupCmd ?? ""} ${session.title}`);
+}
+
+function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+}
+
+function findProjectByPath(projects: Project[], path: string | null | undefined): Project | null {
+  const normalizedPath = path?.trim() ? normalizeProjectPath(path) : "";
+  if (!normalizedPath) return null;
+
+  let bestMatch: Project | null = null;
+  let bestMatchLength = -1;
+
+  for (const project of projects) {
+    const normalizedProjectPath = normalizeProjectPath(project.path);
+    const matches = normalizedPath === normalizedProjectPath || normalizedPath.startsWith(`${normalizedProjectPath}/`);
+    if (!matches || normalizedProjectPath.length <= bestMatchLength) continue;
+    bestMatch = project;
+    bestMatchLength = normalizedProjectPath.length;
+  }
+
+  return bestMatch;
+}
+
+function resolveProjectForSession(
+  session: TerminalSession | null,
+  sessions: TerminalSession[],
+  projects: Project[],
+  projectById: Map<string, Project>,
+  seenSessionIds: Set<string> = new Set()
+): Project | null {
+  if (!session || seenSessionIds.has(session.id)) return null;
+  seenSessionIds.add(session.id);
+
+  if (session.kind === "subagent-transcript" && session.subagent?.parentSessionId) {
+    const parentSession = sessions.find((item) => item.id === session.subagent?.parentSessionId) ?? null;
+    return resolveProjectForSession(parentSession, sessions, projects, projectById, seenSessionIds);
+  }
+
+  if (session.kind === "file-editor") {
+    return session.fileEditor?.project
+      ?? projectById.get(session.fileEditor?.projectId ?? "")
+      ?? findProjectByPath(projects, session.fileEditor?.projectPath)
+      ?? null;
+  }
+
+  if (session.projectId) {
+    const project = projectById.get(session.projectId);
+    if (project) return project;
+  }
+
+  return findProjectByPath(projects, session.cwd);
 }
 
 function buildProjectSplitOptions(project: Project): SplitTerminalOptions {
@@ -1489,6 +1545,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   const terminalToolbarOrder = useSettingsStore((s) => s.terminalToolbarOrder);
   const sidePanelMerged = useSettingsStore((s) => s.terminalSidePanelMerged);
   const updateSettings = useSettingsStore((s) => s.update);
+  const openFileProject = useFileExplorerStore((s) => s.openProject);
+  const fileProject = useFileExplorerStore((s) => s.project);
   const sessionHistoryShortcut = useSettingsStore((s) => s.keyboardShortcuts.sessionHistory);
   const sessionHistoryShortcutHint = sessionHistoryShortcut.trim() || t("common.none");
   const historyOpen = useHistoryStore((s) => s.isOpen);
@@ -1507,6 +1565,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   // 非合并模式：实时统计与 Git 变更各自独立开关，可并排显示
   const [statsOpen, setStatsOpen] = useState(false);
   const [gitOpen, setGitOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const [activeToolbarDragId, setActiveToolbarDragId] = useState<string | null>(null);
   const paneFullscreenStartedFromGlobalRef = useRef(false);
   const previousFullscreenRef = useRef(fullscreen);
@@ -1521,6 +1580,7 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     if (!fullscreenPaneId) return null;
     return allPanes.some((pane) => pane.id === fullscreenPaneId) ? fullscreenPaneId : null;
   }, [allPanes, fullscreenPaneId]);
+  const projectById = useMemo(() => new Map(projects.map((project) => [project.id, project])), [projects]);
   const activeSession = useMemo(
     () => activeSessionId ? sessions.find((session) => session.id === activeSessionId) ?? null : null,
     [activeSessionId, sessions]
@@ -1537,6 +1597,10 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     return activeSession;
   }, [activeSession, sessions]);
   const panelSessionId = panelSession?.id ?? null;
+  const filePanelProject = useMemo(
+    () => resolveProjectForSession(activeSession, sessions, projects, projectById),
+    [activeSession, projectById, projects, sessions]
+  );
   const activeDragSession = useMemo(
     () => activeDragSessionId ? sessions.find((session) => session.id === activeDragSessionId) ?? null : null,
     [activeDragSessionId, sessions]
@@ -1566,10 +1630,24 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
     "--terminal-theme-muted": terminalThemeMuted,
     "--terminal-theme-accent": terminalThemeAccent,
     "--terminal-theme-selection": terminalThemeSelection,
+    "--term-panel-bg": "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 88%, var(--terminal-theme-foreground, #f8fafc) 12%)",
+    "--term-panel-card": "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-theme-foreground, #f8fafc) 10%)",
+    "--term-panel-card-inner": "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 76%, var(--terminal-theme-foreground, #f8fafc) 12%)",
+    "--term-panel-border": "color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 14%, transparent)",
+    "--term-panel-fg": terminalThemeForeground,
+    "--term-panel-dim": "color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 62%, var(--terminal-theme-muted, #64748b) 38%)",
+    "--term-panel-green": terminalTheme.green ?? "#3DD68C",
+    "--term-panel-yellow": terminalTheme.yellow ?? "#E5C453",
+    "--term-panel-red": terminalTheme.red ?? "#F25E5E",
+    "--term-panel-magenta": terminalTheme.magenta ?? "#C77DBB",
+    "--term-panel-cyan": terminalTheme.cyan ?? "#5AC8E0",
+    "--term-panel-blue": terminalTheme.blue ?? "#5B8DEF",
+    "--term-panel-track": "color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 72%, var(--terminal-theme-foreground, #f8fafc) 8%)",
   } as CSSProperties;
   const historyActive = historyOpen && activeWorkspaceTab === "history";
   const statsPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "stats" : statsOpen;
   const gitPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "git" : gitOpen;
+  const filesPanelActive = sidePanelMerged ? sidePanelOpen && sidePanelTab === "files" : filesOpen;
 
   useEffect(() => {
     if (!historyOpen && activeWorkspaceTab === "history") setActiveWorkspaceTab("terminal");
@@ -1790,8 +1868,11 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       setSidePanelTab("stats");
       setSidePanelOpen(true);
     } else {
-      // 窄屏下退化为单面板：打开实时统计时收起 Git，避免挤压终端
-      if (window.innerWidth < 1100) setGitOpen(false);
+      // 窄屏下退化为单面板：打开实时统计时收起其他面板，避免挤压终端
+      if (window.innerWidth < 1100) {
+        setGitOpen(false);
+        setFilesOpen(false);
+      }
       setStatsOpen(true);
     }
   }, [ensureStatsPanelAllowed, sidePanelMerged, statsPanelActive]);
@@ -1806,11 +1887,58 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       setSidePanelTab("git");
       setSidePanelOpen(true);
     } else {
-      // 窄屏下退化为单面板：打开 Git 时收起实时统计，避免挤压终端
-      if (window.innerWidth < 1100) setStatsOpen(false);
+      // 窄屏下退化为单面板：打开 Git 时收起其他面板，避免挤压终端
+      if (window.innerWidth < 1100) {
+        setStatsOpen(false);
+        setFilesOpen(false);
+      }
       setGitOpen(true);
     }
   }, [gitPanelActive, sidePanelMerged]);
+
+  const syncFilePanelProject = useCallback(async (project: Project) => {
+    try {
+      if (fileProject?.id !== project.id && isProjectFileDirty()) {
+        const confirmed = window.confirm(t("sidebar.toast.unsavedFileConfirm"));
+        if (!confirmed) return false;
+      }
+      if (fileProject?.id === project.id) return true;
+      await openFileProject(project);
+      return true;
+    } catch (err) {
+      logError("Failed to open terminal file panel project", err);
+      toast.error(t("sidebar.toast.openProjectFilesFailed"), { description: String(err) });
+      return false;
+    }
+  }, [fileProject?.id, openFileProject, t]);
+
+  const closeFilesPanel = useCallback(() => {
+    if (sidePanelMerged) {
+      if (sidePanelTab === "files") setSidePanelOpen(false);
+      return;
+    }
+    setFilesOpen(false);
+  }, [sidePanelMerged, sidePanelTab]);
+
+  const handleToggleFilesPanel = useCallback(async () => {
+    if (filesPanelActive) {
+      closeFilesPanel();
+      return;
+    }
+    if (!filePanelProject) return;
+    const allowed = await syncFilePanelProject(filePanelProject);
+    if (!allowed) return;
+    if (sidePanelMerged) {
+      setSidePanelTab("files");
+      setSidePanelOpen(true);
+    } else {
+      if (window.innerWidth < 1100) {
+        setStatsOpen(false);
+        setGitOpen(false);
+      }
+      setFilesOpen(true);
+    }
+  }, [closeFilesPanel, filePanelProject, filesPanelActive, sidePanelMerged, syncFilePanelProject]);
 
   const handleSidePanelTabChange = useCallback((tab: TerminalSidePanelTab) => {
     if (tab === "stats") {
@@ -1819,20 +1947,46 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
       });
       return;
     }
+    if (tab === "files") {
+      if (!filePanelProject) return;
+      void syncFilePanelProject(filePanelProject).then((allowed) => {
+        if (allowed) setSidePanelTab("files");
+      });
+      return;
+    }
     setSidePanelTab(tab);
-  }, [ensureStatsPanelAllowed]);
+  }, [ensureStatsPanelAllowed, filePanelProject, syncFilePanelProject]);
 
   // 响应式约束：非合并模式下两个面板各占固定宽度，窗口过窄时会挤压终端。
-  // 同时打开且窗口 < 1100px 时自动收起 Git 面板（保留实时统计），并随窗口缩小持续生效。
+  // 窗口 < 1100px 时退化为单面板，并随窗口缩小持续生效。
   useEffect(() => {
-    if (sidePanelMerged || !statsOpen || !gitOpen) return;
+    if (sidePanelMerged) return;
     const enforce = () => {
-      if (window.innerWidth < 1100) setGitOpen(false);
+      if (window.innerWidth >= 1100) return;
+      const openPanels = [statsOpen, gitOpen, filesOpen].filter(Boolean).length;
+      if (openPanels <= 1) return;
+      if (statsOpen) {
+        setGitOpen(false);
+        setFilesOpen(false);
+        return;
+      }
+      if (gitOpen) {
+        setFilesOpen(false);
+      }
     };
     enforce();
     window.addEventListener("resize", enforce);
     return () => window.removeEventListener("resize", enforce);
-  }, [sidePanelMerged, statsOpen, gitOpen]);
+  }, [filesOpen, gitOpen, sidePanelMerged, statsOpen]);
+
+  useEffect(() => {
+    if (!filesPanelActive) return;
+    if (!filePanelProject) {
+      closeFilesPanel();
+      return;
+    }
+    void syncFilePanelProject(filePanelProject);
+  }, [closeFilesPanel, filePanelProject?.id, filesPanelActive, syncFilePanelProject]);
 
   const handleOpenHistoryTab = useCallback(() => {
     if (historyOpen) {
@@ -2039,6 +2193,31 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
           <GitBranch size={13} strokeWidth={1.8} />
         </button>
       ),
+      files: (
+        <button
+          onClick={handleToggleFilesPanel}
+          disabled={!filesPanelActive && !filePanelProject}
+          className="ui-focus-ring ui-icon-action ui-action-files"
+          data-active={filesPanelActive ? "true" : "false"}
+          title={
+            !filesPanelActive && !filePanelProject
+              ? t("termStats.noProject")
+              : filesPanelActive
+                ? t("terminal.toolbar.closeFilesPanel")
+                : t("terminal.toolbar.openFilesPanel")
+          }
+          aria-label={
+            !filesPanelActive && !filePanelProject
+              ? t("termStats.noProject")
+              : filesPanelActive
+                ? t("terminal.toolbar.closeFilesPanel")
+                : t("terminal.toolbar.openFilesPanel")
+          }
+          aria-pressed={filesPanelActive}
+        >
+          <Folder size={13} strokeWidth={1.8} />
+        </button>
+      ),
       stats: (
         <button
           onClick={handleToggleStatsPanel}
@@ -2094,9 +2273,12 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
   }, [
     activeToolbarDragId,
     fullscreen,
+    filePanelProject,
+    filesPanelActive,
     gitPanelActive,
     handleNewTab,
     handleOpenHistoryTab,
+    handleToggleFilesPanel,
     handleToggleGitChangesPanel,
     handleToggleGlobalFullscreen,
     handleToggleStatsPanel,
@@ -2266,6 +2448,8 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
               activeTab={sidePanelTab}
               activeSessionId={panelSessionId}
               projectPath={panelSession?.cwd ?? null}
+              filesTabDisabled={!filePanelProject}
+              filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
               onTabChange={handleSidePanelTabChange}
             />
           ) : (
@@ -2290,6 +2474,16 @@ export function TerminalTabs({ fullscreen = false, onToggleFullscreen }: Termina
                   <Suspense fallback={null}>
                     <GitChangesPanel open={gitOpen} projectPath={panelSession?.cwd ?? null} embedded />
                   </Suspense>
+                </ResizableTerminalPanelFrame>
+              )}
+              {filesOpen && (
+                <ResizableTerminalPanelFrame
+                  storageKey={TERMINAL_FILES_PANEL_WIDTH_STORAGE_KEY}
+                  defaultWidth={TERMINAL_FILES_PANEL_DEFAULT_WIDTH}
+                  resizeLabel={t("terminal.panel.resizeFilesLabel")}
+                  resizeTitle={t("terminal.panel.resizeFilesTitle")}
+                >
+                  <FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />
                 </ResizableTerminalPanelFrame>
               )}
             </>

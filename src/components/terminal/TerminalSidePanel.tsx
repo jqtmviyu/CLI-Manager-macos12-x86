@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { BarChart3, GitBranch } from "../icons";
-import { TERM } from "../stats/termStatsUi";
+import { BarChart3, Folder, GitBranch } from "../icons";
+import { TERM_PANEL, panelColorTint } from "../stats/termStatsUi";
 import { TerminalStatsPanel } from "./TerminalStatsPanel";
 import { useI18n } from "../../lib/i18n";
 
@@ -8,13 +8,15 @@ const GitChangesPanel = lazy(() =>
   import("../git/GitChangesPanel").then((module) => ({ default: module.GitChangesPanel }))
 );
 
-export type TerminalSidePanelTab = "stats" | "git";
+export type TerminalSidePanelTab = "stats" | "git" | "files";
 
 interface TerminalSidePanelProps {
   open: boolean;
   activeTab: TerminalSidePanelTab;
   activeSessionId: string | null;
   projectPath: string | null;
+  filesTabDisabled?: boolean;
+  filesPanelContent?: ReactNode;
   onTabChange: (tab: TerminalSidePanelTab) => void;
 }
 
@@ -24,8 +26,10 @@ const TERMINAL_PANEL_MAX_WIDTH = 500;
 
 export const TERMINAL_STATS_PANEL_WIDTH_STORAGE_KEY = "cli-manager:terminal-stats-panel-width";
 export const TERMINAL_GIT_PANEL_WIDTH_STORAGE_KEY = "cli-manager:terminal-git-panel-width";
+export const TERMINAL_FILES_PANEL_WIDTH_STORAGE_KEY = "cli-manager:terminal-files-panel-width";
 export const TERMINAL_STATS_PANEL_DEFAULT_WIDTH = 203;
 export const TERMINAL_GIT_PANEL_DEFAULT_WIDTH = 196;
+export const TERMINAL_FILES_PANEL_DEFAULT_WIDTH = 220;
 
 interface ResizableTerminalPanelFrameProps {
   storageKey: string;
@@ -145,7 +149,7 @@ export function ResizableTerminalPanelFrame({
     <aside
       ref={panelRef}
       className="relative flex shrink-0 flex-col overflow-hidden border-l border-border font-mono"
-      style={{ width, minWidth, maxWidth, backgroundColor: TERM.bg }}
+      style={{ width, minWidth, maxWidth, backgroundColor: TERM_PANEL.bg }}
     >
       <div
         role="separator"
@@ -160,7 +164,15 @@ export function ResizableTerminalPanelFrame({
   );
 }
 
-export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPath, onTabChange }: TerminalSidePanelProps) {
+export function TerminalSidePanel({
+  open,
+  activeTab,
+  activeSessionId,
+  projectPath,
+  filesTabDisabled = false,
+  filesPanelContent = null,
+  onTabChange,
+}: TerminalSidePanelProps) {
   const { t } = useI18n();
 
   if (!open) return null;
@@ -168,6 +180,7 @@ export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPat
   const tabs = [
     { key: "stats" as const, label: t("terminal.panel.sideStats"), icon: <BarChart3 size={12} strokeWidth={1.8} /> },
     { key: "git" as const, label: t("terminal.panel.gitChanges"), icon: <GitBranch size={12} strokeWidth={1.8} /> },
+    { key: "files" as const, label: t("terminal.panel.files"), icon: <Folder size={12} strokeWidth={1.8} />, disabled: filesTabDisabled },
   ];
 
   return (
@@ -177,7 +190,7 @@ export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPat
       resizeLabel={t("terminal.panel.resizeSideLabel")}
       resizeTitle={t("terminal.panel.resizeSideTitle")}
     >
-      <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM.dim }}>
+      <div className="flex shrink-0 gap-1 border-b px-2 py-1.5" style={{ borderColor: TERM_PANEL.border }}>
         {tabs.map((tab) => {
           const selected = activeTab === tab.key;
           return (
@@ -185,11 +198,13 @@ export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPat
               key={tab.key}
               type="button"
               onClick={() => onTabChange(tab.key)}
+              disabled={tab.disabled}
               className="ui-focus-ring flex flex-1 items-center justify-center gap-1 rounded px-2 py-1 text-[11px] font-bold transition-colors"
               style={{
-                color: selected ? TERM.cyan : TERM.dim,
-                backgroundColor: selected ? `${TERM.cyan}18` : "transparent",
-                border: `1px solid ${selected ? `${TERM.cyan}55` : "transparent"}`,
+                color: selected ? TERM_PANEL.cyan : TERM_PANEL.dim,
+                backgroundColor: selected ? panelColorTint(TERM_PANEL.cyan, 10) : "transparent",
+                border: `1px solid ${selected ? panelColorTint(TERM_PANEL.cyan, 34) : "transparent"}`,
+                opacity: tab.disabled ? 0.45 : 1,
               }}
               aria-pressed={selected}
             >
@@ -207,6 +222,7 @@ export function TerminalSidePanel({ open, activeTab, activeSessionId, projectPat
             <GitChangesPanel open={open} projectPath={projectPath} visible embedded />
           </Suspense>
         )}
+        {activeTab === "files" ? filesPanelContent : null}
       </div>
     </ResizableTerminalPanelFrame>
   );

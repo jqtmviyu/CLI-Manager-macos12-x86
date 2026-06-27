@@ -2381,9 +2381,9 @@
   isolation: isolate;
   width: 38px;
   padding: 6px 4px;
-  border-left: 1px solid color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 7%, transparent);
+  border-left: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
   background-color: transparent;
-  color: var(--terminal-theme-foreground, #f8fafc);
+  color: var(--on-surface);
 }
 
 .ui-terminal-action-sidebar::before {
@@ -2392,8 +2392,8 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--terminal-tab-accent) 5%, transparent), transparent 42%),
-    color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 91%, #000 9%);
+    linear-gradient(180deg, color-mix(in srgb, var(--primary) 8%, transparent), transparent 42%),
+    color-mix(in srgb, var(--surface-container-low) 86%, var(--surface) 14%);
   z-index: -1;
 }
 
@@ -2444,7 +2444,7 @@
   transform: none;
   border-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 18%, transparent);
   background-color: color-mix(in srgb, var(--terminal-action-color, currentColor) 9%, transparent);
-  color: color-mix(in srgb, var(--terminal-action-color, currentColor) 92%, var(--terminal-theme-foreground, #f8fafc) 8%);
+  color: color-mix(in srgb, var(--terminal-action-color, currentColor) 88%, var(--on-surface) 12%);
 }
 
 .ui-terminal-action-sidebar .ui-primary-action,
@@ -2474,15 +2474,15 @@
 }
 
 .ui-action-template {
-  --terminal-action-color: #c77dbb;
+  --terminal-action-color: color-mix(in srgb, var(--primary) 72%, var(--danger) 28%);
 }
 
 .ui-action-command-history {
-  --terminal-action-color: #5ac8e0;
+  --terminal-action-color: color-mix(in srgb, var(--primary) 68%, var(--success) 32%);
 }
 
 .ui-action-fullscreen {
-  --terminal-action-color: #5b8def;
+  --terminal-action-color: color-mix(in srgb, var(--primary) 82%, var(--text-primary) 18%);
 }
 
 .ui-action-session-history {
@@ -2490,7 +2490,11 @@
 }
 
 .ui-action-git {
-  --terminal-action-color: #f97316;
+  --terminal-action-color: color-mix(in srgb, var(--warning) 72%, var(--primary) 28%);
+}
+
+.ui-action-files {
+  --terminal-action-color: color-mix(in srgb, var(--accent) 78%, var(--primary) 22%);
 }
 
 .ui-action-stats {

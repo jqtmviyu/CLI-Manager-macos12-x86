@@ -15,6 +15,11 @@ import { Dialog, DialogContent, DialogFooter, DialogTitle } from "../ui/dialog";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
 import { ChevronRight, Copy, File, FileCode, Folder, FolderPlus, Pencil, RefreshCw, Search, Trash2, X } from "../icons";
 
+interface FileExplorerSidebarProps {
+  mode?: "sidebar" | "panel";
+  onClosePanel?: () => void;
+}
+
 type InputAction =
   | { kind: "create-file"; parentPath: string }
   | { kind: "create-dir"; parentPath: string }
@@ -589,7 +594,7 @@ function FileTreeRows({
   );
 }
 
-export function FileExplorerSidebar() {
+export function FileExplorerSidebar({ mode = "sidebar", onClosePanel }: FileExplorerSidebarProps) {
   const { t } = useI18n();
   const project = useFileExplorerStore((s) => s.project);
   const tree = useFileExplorerStore((s) => s.tree);
@@ -1020,6 +1025,16 @@ export function FileExplorerSidebar() {
 
   if (!project) return null;
 
+  const handleClose = () => {
+    if (mode === "panel") {
+      onClosePanel?.();
+      return;
+    }
+    closeProject();
+  };
+
+  const closeLabel = mode === "panel" ? t("files.closePanel") : t("files.backToProjects");
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-border px-2 py-2">
@@ -1032,7 +1047,7 @@ export function FileExplorerSidebar() {
           <button className="ui-icon-action" title={t("common.refresh")} aria-label={t("files.refreshList")} onClick={() => void refresh()}>
             <RefreshCw size={13} />
           </button>
-          <button className="ui-icon-action" title={t("files.backToProjects")} aria-label={t("files.backToProjects")} onClick={closeProject}>
+          <button className="ui-icon-action" title={closeLabel} aria-label={closeLabel} onClick={handleClose}>
             <X size={14} />
           </button>
         </div>
