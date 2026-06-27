@@ -4,7 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import type { SubagentTranscriptSource, TerminalSession, Project } from "../lib/types";
 import { logError, logInfo, logWarn } from "../lib/logger";
-import { normalizeDirectCodexStartupCommand } from "../lib/projectStartupCommand";
+import { normalizeDirectCodexStartupCommand, withCodexLightTuiTheme } from "../lib/projectStartupCommand";
+import { getTerminalTheme } from "../lib/terminalThemes";
 import { useSettingsStore } from "./settingsStore";
 import { useSessionStore } from "./sessionStore";
 import { defaultShellForOs, getOsPlatform, normalizeShellForOs, normalizeShellKey, type OsPlatform, type ShellKey } from "../lib/shell";
@@ -602,6 +603,26 @@ function resolveShellForPty(shell: string | null | undefined, hasProject: boolea
   return normalizeShellForOs(useSettingsStore.getState().defaultShell, os) ?? defaultShellForOs(os);
 }
 
+function isLightHexColor(value: string | undefined): boolean {
+  if (!value || !/^#[0-9a-f]{6}$/i.test(value)) return false;
+  const r = Number.parseInt(value.slice(1, 3), 16);
+  const g = Number.parseInt(value.slice(3, 5), 16);
+  const b = Number.parseInt(value.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b > 160;
+}
+
+function isCurrentTerminalBackgroundLight(): boolean {
+  const settings = useSettingsStore.getState();
+  const themeName = settings.terminalThemeMode === "follow-app" ? "auto" : settings.terminalThemeName;
+  const theme = getTerminalTheme(themeName, settings.resolvedTheme, settings.lightThemePalette, settings.darkThemePalette);
+  return isLightHexColor(theme.background);
+}
+
+function prepareStartupCommandForPty(command: string | undefined, shell: ShellKey | null): string | undefined {
+  if (!command || shell !== "gitbash" || !isCurrentTerminalBackgroundLight()) return command;
+  return withCodexLightTuiTheme(command);
+}
+
 // hook running 超时回退：Stop/StopFailure 丢失（hook 脚本失败、bridge 不可达）
 // 时 Tab 会永久停留 running，超时后回退为 none（未知）。阈值取宽（Claude 长任务
 // 可合法运行很久），只兜底明显异常的滞留。
@@ -687,6 +708,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   createSession: async (projectId, cwd, title, startupCmd, envVars, shell, paneId) => {
     const os = await getOsPlatform();
     const resolvedShell = resolveShellForPty(shell, !!projectId, os);
+    const launchStartupCmd = prepareStartupCommandForPty(startupCmd, resolvedShell);
 
     let sessionId: string;
     try {
@@ -741,14 +763,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     await useSessionStore.getState().saveSessions(newSessions);
     await useSessionStore.getState().saveActiveSessionId(sessionId);
 
-    if (startupCmd) {
+    if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId, data: startupCmd + "\r" }).catch((err) => {
+        invoke("pty_write", { sessionId, data: launchStartupCmd + "\r" }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write startup command", {
             sessionId,
             hasStartupCmd: true,
-            startupCmdSummary: summarizeStartupCmd(startupCmd),
+            startupCmdSummary: summarizeStartupCmd(launchStartupCmd),
             err,
           });
         });
@@ -990,6 +1012,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
 
     const os = await getOsPlatform();
     const resolvedShell = resolveShellForPty(options?.shell, !!options?.projectId, os);
+    const launchStartupCmd = prepareStartupCommandForPty(options?.startupCmd, resolvedShell);
 
     let splitSessionId: string;
     try {
@@ -1046,14 +1069,14 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
     await useSessionStore.getState().saveActiveSessionId(splitSessionId);
     await useSessionStore.getState().saveSplits([]);
 
-    if (options?.startupCmd) {
+    if (launchStartupCmd) {
       setTimeout(() => {
-        invoke("pty_write", { sessionId: splitSessionId, data: options.startupCmd + "\r" }).catch((err) => {
+        invoke("pty_write", { sessionId: splitSessionId, data: launchStartupCmd + "\r" }).catch((err) => {
           toast.error("启动命令写入失败", { description: String(err) });
           logError("Failed to write split startup command", {
             sessionId: splitSessionId,
             hasStartupCmd: true,
-            startupCmdSummary: summarizeStartupCmd(options.startupCmd),
+            startupCmdSummary: summarizeStartupCmd(launchStartupCmd),
             err,
           });
         });
@@ -1252,6 +1275,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       newIdMap[ps.id] = newSessionId;
 
       const restoredStartupCmd = normalizeDirectCodexStartupCommand(ps.startupCmd);
+      const launchStartupCmd = prepareStartupCommandForPty(restoredStartupCmd, resolvedShell);
       const restoredSession: TerminalSession = {
         id: newSessionId,
         projectId: ps.projectId,
@@ -1283,13 +1307,13 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       restoredListeners[newSessionId] = unlisten;
 
       // 执行启动命令
-      if (restoredStartupCmd) {
+      if (launchStartupCmd) {
         setTimeout(() => {
-          invoke("pty_write", { sessionId: newSessionId, data: restoredStartupCmd + "\r" }).catch((err) => {
+          invoke("pty_write", { sessionId: newSessionId, data: launchStartupCmd + "\r" }).catch((err) => {
             logError("Failed to write startup command on restore", {
               sessionId: newSessionId,
               hasStartupCmd: true,
-              startupCmdSummary: summarizeStartupCmd(restoredStartupCmd),
+              startupCmdSummary: summarizeStartupCmd(launchStartupCmd),
               err,
             });
           });

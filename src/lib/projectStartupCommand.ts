@@ -3,6 +3,7 @@ import { getCodexProviderOverride, isExactCodexProject } from "./providerSwitchi
 
 const CODEX_NO_ALT_SCREEN_ARG = "--no-alt-screen";
 const CODEX_PROFILE_ARG = "--profile";
+const CODEX_LIGHT_TUI_THEME_ARG = "-c tui.theme=catppuccin-latte";
 const DIRECT_CODEX_COMMAND_PATTERN = /^(\s*codex(?:\.(?:cmd|exe|ps1))?)(?=\s|$)/i;
 
 function isCodexStartupCommand(command: string): boolean {
@@ -17,6 +18,10 @@ function hasProfileArg(command: string): boolean {
   return new RegExp(`(^|\\s)${CODEX_PROFILE_ARG}(\\s|$)`).test(command);
 }
 
+function hasTuiThemeConfigArg(command: string): boolean {
+  return /(^|\s)(?:-c|--config)(?:\s+|=)["']?tui\.theme\s*=/i.test(command);
+}
+
 export function normalizeDirectCodexStartupCommand(command?: string): string | undefined {
   const trimmed = command?.trim();
   if (!trimmed) return undefined;
@@ -26,6 +31,16 @@ export function normalizeDirectCodexStartupCommand(command?: string): string | u
   if (!match) return trimmed;
 
   return `${match[1]} ${CODEX_NO_ALT_SCREEN_ARG}${trimmed.slice(match[1].length)}`;
+}
+
+export function withCodexLightTuiTheme(command?: string): string | undefined {
+  const normalized = normalizeDirectCodexStartupCommand(command);
+  if (!normalized || hasTuiThemeConfigArg(normalized)) return normalized;
+
+  const match = DIRECT_CODEX_COMMAND_PATTERN.exec(normalized);
+  if (!match) return normalized;
+
+  return `${match[1]} ${CODEX_LIGHT_TUI_THEME_ARG}${normalized.slice(match[1].length)}`;
 }
 
 export function resolveProjectStartupCommand(
