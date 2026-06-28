@@ -14,7 +14,7 @@ use log::LevelFilter;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, Runtime,
+    AppHandle, Emitter, Manager, RunEvent, Runtime,
 };
 use tauri_plugin_log::{Builder as LogBuilder, Target, TargetKind, TimezoneStrategy};
 use tauri_plugin_sql::{Builder as SqlBuilder, Migration, MigrationKind};
@@ -404,6 +404,17 @@ pub fn run() {
             commands::system_notification::is_wsl,
             commands::system_notification::send_notification_via_windows,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event {
+                if !has_visible_windows {
+                    show_main_window(app);
+                }
+            }
+        });
 }
