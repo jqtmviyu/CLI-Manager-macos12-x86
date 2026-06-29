@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Bot, Check, ChevronDown, ChevronRight, Folder, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
+import { Bot, Check, ChevronDown, ChevronRight, CircleChevronDown, CircleChevronRight, Folder, RefreshCw, Search, Star, Terminal, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import type { Group, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../lib/types";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
@@ -691,7 +691,7 @@ export function HistoryListPane({
               >
                 {allVisibleSelected
                   ? t("history.bulk.clearVisibleSelection")
-                  : t("history.bulk.selectVisible", { count: visibleSessionCount })}
+                  : t("history.bulk.selectVisible")}
               </button>
               <button
                 type="button"
@@ -763,12 +763,12 @@ export function HistoryListPane({
                 )}
 
                 {row.type === "session" && (
-                  <div className={row.depth > 0 ? "relative py-0.5 pr-2 pl-9" : "py-1 pr-2 pl-2"}>
+                  <div className={row.depth > 0 ? "relative py-0.5 pr-2 pl-12" : "py-1 pr-2 pl-2"}>
                     {row.depth > 0 && (
                       <>
-                        <span className="absolute bottom-0 left-[18px] top-[-8px] w-px bg-border/70" aria-hidden="true" />
-                        <span className="absolute left-[18px] top-1/2 h-px w-3 bg-border/70" aria-hidden="true" />
-                        <span className="absolute left-[28px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-text-muted/70" aria-hidden="true" />
+                        <span className="absolute bottom-0 left-[24px] top-[-8px] w-px bg-border/70" aria-hidden="true" />
+                        <span className="absolute left-[24px] top-1/2 h-px w-4 bg-border/70" aria-hidden="true" />
+                        <span className="absolute left-[38px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-text-muted/70" aria-hidden="true" />
                       </>
                     )}
                     <div
@@ -790,7 +790,7 @@ export function HistoryListPane({
                             e.stopPropagation();
                             toggleSessionParent(row.item.sessionKey);
                           }}
-                          className="ui-flat-action mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-surface-container-high text-text-secondary"
+                          className="ui-flat-action mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-surface-container-high text-text-secondary"
                           aria-expanded={!collapsedSessionParents.has(row.item.sessionKey)}
                           aria-label={t(
                             collapsedSessionParents.has(row.item.sessionKey)
@@ -806,9 +806,9 @@ export function HistoryListPane({
                           )}
                         >
                           {collapsedSessionParents.has(row.item.sessionKey) ? (
-                            <ChevronRight size={14} strokeWidth={2.4} />
+                            <CircleChevronRight size={19} strokeWidth={2.1} className="text-primary/90" />
                           ) : (
-                            <ChevronDown size={14} strokeWidth={2.4} />
+                            <CircleChevronDown size={19} strokeWidth={2.1} className="text-primary/90" />
                           )}
                         </button>
                       )}
@@ -891,7 +891,7 @@ export function HistoryListPane({
                         <button
                           type="button"
                           onClick={() => onDeleteSession(row.item)}
-                          className="ui-flat-action mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted hover:text-danger"
+                          className="ui-flat-action mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-danger/25 bg-danger/10 text-danger/85 hover:border-danger/40 hover:bg-danger/18 hover:text-danger"
                           aria-label={t("history.deleteSessionNamed", { title: row.item.displayTitle })}
                           title={t("history.deleteSession")}
                         >
