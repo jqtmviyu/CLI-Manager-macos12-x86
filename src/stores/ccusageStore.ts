@@ -93,26 +93,32 @@ function parseWslDistro(path: string | null | undefined): string | null {
 
 export function resolveCcusageWslTarget(
   claudeConfigDir: string | null | undefined,
-  codexConfigDir: string | null | undefined
+  codexConfigDir: string | null | undefined,
+  fallbackDistro?: string | null
 ): { distro: string | null; conflicts: string[] } {
   const distros = Array.from(new Set([parseWslDistro(claudeConfigDir), parseWslDistro(codexConfigDir)].filter((value): value is string => Boolean(value))));
   if (distros.length === 1) return { distro: distros[0], conflicts: [] };
   if (distros.length > 1) return { distro: null, conflicts: distros };
-  return { distro: null, conflicts: [] };
+  const fallback = typeof fallbackDistro === "string" ? fallbackDistro.trim() : "";
+  return { distro: fallback || null, conflicts: [] };
 }
 
 export function resolveCcusageRuntimeScope(
   source: CcusageSource,
   claudeConfigDir: string | null | undefined,
   codexConfigDir: string | null | undefined,
-  useWsl = true
+  useWsl = true,
+  fallbackDistro?: string | null
 ): CcusageRuntimeScope {
   if (!useWsl) return { kind: "host" };
   const claudeDistro = parseWslDistro(claudeConfigDir);
   const codexDistro = parseWslDistro(codexConfigDir);
+  const fallback = typeof fallbackDistro === "string" && fallbackDistro.trim() ? fallbackDistro.trim() : null;
+  const hasClaudeConfig = typeof claudeConfigDir === "string" && claudeConfigDir.trim().length > 0;
+  const hasCodexConfig = typeof codexConfigDir === "string" && codexConfigDir.trim().length > 0;
 
-  if (source === "claude") return claudeDistro ? { kind: "wsl", distro: claudeDistro } : { kind: "host" };
-  if (source === "codex") return codexDistro ? { kind: "wsl", distro: codexDistro } : { kind: "host" };
+  if (source === "claude") return claudeDistro ? { kind: "wsl", distro: claudeDistro } : !hasClaudeConfig && fallback ? { kind: "wsl", distro: fallback } : { kind: "host" };
+  if (source === "codex") return codexDistro ? { kind: "wsl", distro: codexDistro } : !hasCodexConfig && fallback ? { kind: "wsl", distro: fallback } : { kind: "host" };
 
   const distros = Array.from(new Set([claudeDistro, codexDistro].filter((value): value is string => Boolean(value))));
   const hasHostConfig = Boolean(
@@ -122,6 +128,7 @@ export function resolveCcusageRuntimeScope(
   if (distros.length > 1) return { kind: "mixed", reason: "multi-wsl" };
   if (distros.length === 1 && hasHostConfig) return { kind: "mixed", reason: "host-wsl" };
   if (distros.length === 1) return { kind: "wsl", distro: distros[0] };
+  if (!hasClaudeConfig && !hasCodexConfig && fallback) return { kind: "wsl", distro: fallback };
   return { kind: "host" };
 }
 
@@ -238,9 +245,10 @@ function refreshReportFromBackend(
   source: CcusageSource,
   claudeConfigDir: string | null,
   codexConfigDir: string | null,
-  useWsl: boolean
+  useWsl: boolean,
+  fallbackDistro: string | null
 ): Promise<CcusageReport> {
-  const runtimeKey = runtimeScopeKey(resolveCcusageRuntimeScope(source, claudeConfigDir, codexConfigDir, useWsl));
+  const runtimeKey = runtimeScopeKey(resolveCcusageRuntimeScope(source, claudeConfigDir, codexConfigDir, useWsl, fallbackDistro));
   const key = JSON.stringify([source, runtimeKey, claudeConfigDir ?? "", codexConfigDir ?? ""]);
   const existing = inFlightReportRefreshes.get(key);
   if (existing) return existing;
@@ -316,12 +324,14 @@ export const useCcusageStore = create<CcusageStore>((set, get) => ({
   loadCachedReport: async () => {
     const source = get().source;
     const settings = useSettingsStore.getState();
+    const fallbackDistro = get().toolStatus?.wsl?.distro ?? null;
     const runtimeKey = runtimeScopeKey(
       resolveCcusageRuntimeScope(
         source,
         settings.claudeHookConfigDir,
         settings.codexHookConfigDir,
-        settings.ccusageUseWsl
+        settings.ccusageUseWsl,
+        fallbackDistro
       )
     );
     set({ loadingCache: true, error: null });
@@ -339,13 +349,15 @@ export const useCcusageStore = create<CcusageStore>((set, get) => ({
   refreshReport: async () => {
     const source = get().source;
     const settings = useSettingsStore.getState();
+    const fallbackDistro = get().toolStatus?.wsl?.distro ?? null;
     set({ refreshing: true, error: null });
     try {
       const report = await refreshReportFromBackend(
         source,
         settings.claudeHookConfigDir,
         settings.codexHookConfigDir,
-        settings.ccusageUseWsl
+        settings.ccusageUseWsl,
+        fallbackDistro
       );
       if (get().source === source) {
         set({ report, refreshing: false });

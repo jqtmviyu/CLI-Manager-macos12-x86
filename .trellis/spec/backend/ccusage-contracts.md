@@ -43,7 +43,8 @@ function resolveCcusageRuntimeScope(
   source: CcusageSource,
   claudeConfigDir: string | null | undefined,
   codexConfigDir: string | null | undefined,
-  useWsl?: boolean
+  useWsl?: boolean,
+  fallbackDistro?: string | null
 ): { kind: "host" } | { kind: "wsl"; distro: string } | { kind: "mixed"; reason: "host-wsl" | "multi-wsl" }
 ```
 
@@ -54,9 +55,14 @@ function resolveCcusageRuntimeScope(
 - When `ccusageUseWsl === false`, frontend cache keys must also resolve to the host scope so Windows and WSL reports do not share one cache bucket.
 - When `ccusageUseWsl === false`, Rust must pass config directory env vars as raw Windows/UNC paths; do not rewrite them to Linux paths.
 - Only when `ccusageUseWsl === true` may runtime selection parse WSL UNC config paths and switch the report execution target to `wsl.exe`.
+- When `ccusageUseWsl === true` and both `claudeHookConfigDir` and `codexHookConfigDir` are empty, backend may probe the default WSL distro via `wsl.exe --exec sh -lc 'printf ... "$WSL_DISTRO_NAME" "$HOME"'`.
+- The default-WSL fallback is allowed only for the fully-empty case. If either config directory is explicitly set, frontend and backend must keep respecting the explicit host/UNC path instead of silently overriding it with the default distro.
+- The default-WSL fallback must derive `CLAUDE_CONFIG_DIR=/home/<user>/.claude` and `CODEX_HOME=/home/<user>/.codex` from the detected WSL `$HOME`.
+- Frontend runtime scope, WSL target badges, and cache keys must accept the backend-reported `toolStatus.wsl.distro` as fallback input so UI state matches the runtime chosen by Rust.
 - `ccusage_get_status` remains observational: it may still report both host and discovered WSL tool status regardless of the toggle, because the settings UI needs to show readiness before the user enables WSL execution.
 - `CcusageStatsPanel` must derive readiness, prepare-card warnings, mixed-runtime warnings, and WSL install hints from the explicit runtime scope, not merely from the existence of any WSL config path.
 - Host install CTA (`installTools()` without WSL target) must only show when the active runtime scope is `host`.
+- Report refresh execution must invoke `bun x ccusage ...`, not `bunx ccusage ...`. This avoids PATH / wrapper drift where WSL resolves `ccusage` through a Node global entrypoint that fails on locale JSON ESM imports.
 
 ### 4. Validation & Error Matrix
 
@@ -65,6 +71,8 @@ function resolveCcusageRuntimeScope(
 | `ccusageUseWsl = false` + config dirs are host paths | Run host ccusage; cache scope = `host` |
 | `ccusageUseWsl = false` + config dirs are WSL UNC paths | Still run host ccusage; pass UNC env vars through unchanged |
 | `ccusageUseWsl = true` + one source resolves to one WSL distro | Run WSL ccusage in that distro |
+| `ccusageUseWsl = true` + both config dirs empty + default WSL distro exists | Run WSL ccusage in the default distro and use `~/.claude` / `~/.codex` inside that distro |
+| `ccusageUseWsl = true` + one config dir explicitly points to host path | Respect the explicit host path for that source; do not override it with default WSL fallback |
 | `ccusageUseWsl = true` + source `all` mixes host + WSL | Return the existing mixed-runtime error; frontend must show the mixed-runtime hint |
 | `ccusageUseWsl = true` + source `all` sees multiple WSL distros | Return the existing multi-distro error; frontend must show the conflict hint |
 | `ccusageUseWsl = true` + current source runtime is WSL but bunx missing | Refresh stays disabled; prepare card shows WSL manual hint |
@@ -94,6 +102,15 @@ let (target, envs) = resolve_runtime_for_source(
 )?;
 ```
 
+Base:
+
+```rust
+let fallback = detect_default_wsl_context()?;
+let claude = fallback
+    .as_ref()
+    .map(|context| default_wsl_config_dir(context, ".claude"));
+```
+
 Bad:
 
 ```ts
@@ -107,10 +124,13 @@ const runtimeScope = resolveCcusageRuntimeScope(source, claudeDir, codexDir);
   - `npx tsc --noEmit`
   - With `ccusageUseWsl = false`, verify Usage Analysis settings still load and the panel no longer shows WSL-only prepare hints for host runtime.
   - With `ccusageUseWsl = true`, verify current-source WSL readiness/hints and mixed-runtime messages still match the actual source.
+  - With empty Hook config dirs + backend fallback distro present, verify WSL target badge, runtime scope, and cache key all resolve to the same fallback distro.
 - Backend:
   - `cd src-tauri && cargo check`
   - Assert `ccusage_refresh_report(..., use_wsl = false)` keeps host runtime even for WSL UNC config dirs.
   - Assert `ccusage_refresh_report(..., use_wsl = true)` still converts WSL UNC config dirs to Linux paths and runs via WSL target.
+  - Assert default fallback is used only when both config dirs are empty.
+  - Assert report command construction uses `bun` with `["x", "ccusage", ...]` so refresh does not depend on `bunx` / `ccusage` shell wrappers.
 
 ### 7. Wrong vs Correct
 
@@ -126,4 +146,15 @@ let claude = resolve_config_dir(claude_config_dir, "Claude")?;
 ```rust
 let claude = resolve_config_dir_for_runtime(claude_config_dir, "Claude", use_wsl)?;
 // Only convert UNC -> Linux path and switch target when the explicit toggle is on.
+```
+
+#### Correct
+
+```rust
+let default_wsl = fallback_default_wsl_context(
+    claude_config_dir.as_ref(),
+    codex_config_dir.as_ref(),
+    use_wsl,
+)?;
+// Only when both config dirs are empty may the runtime fall back to the default WSL distro.
 ```

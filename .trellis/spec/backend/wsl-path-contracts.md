@@ -84,6 +84,17 @@ wsl.exe -d <distro> find <root> -name "*.jsonl" -type f -printf "%p\t%s\t%T@\n"
 
 Cache the parsed fingerprint by the UNC path for the same TTL as the file-list cache. Per-file `wsl.exe stat` is only a fallback when a caller asks for a WSL fingerprint and no fresh batch fingerprint exists.
 
+### Verbatim UNC normalization before WSL scope checks
+
+Windows `canonicalize()` may rewrite a WSL UNC path to verbatim UNC form:
+
+```text
+\\wsl.localhost\Ubuntu\home\venti\.codex\sessions
+=> \\?\UNC\wsl.localhost\Ubuntu\home\venti\.codex\sessions
+```
+
+When history/session code compares a requested file against a WSL history root, normalize `\\?\UNC\wsl.localhost\...` and `\\?\UNC\wsl$\...` back to standard UNC form before calling `parse_wsl_unc_path`. Otherwise the code falls back to plain `PathBuf::starts_with`, and valid WSL session files can be misclassified as `session_file_outside_history_scope`.
+
 ```rust
 // Bad: thousands of session files -> thousands of Windows/WSL process launches.
 for path in session_files {
@@ -200,6 +211,7 @@ wsl.exe -d Ubuntu --exec sh -lc "curl -fsSL https://bun.sh/install | bash"
 - `wsl_find_session_files` 的 find 输出解析（纯解析单测覆盖 path/size/mtime；真实 WSL find 作为集成测试）
 - `open_git_repo` 在 WSL UNC 路径下成功打开仓库（需要 WSL 环境）
 - `session_matches_project_path` 同时匹配 Windows 盘符 + WSL /mnt + WSL UNC→Linux 三种 project_key
+- `path_within_history_scope` 接受 `\\wsl$` / `\\wsl.localhost` / `\\?\UNC\wsl*` 三种等价前缀，且仍拒绝历史根目录外部路径
 - `ccusage_get_status` 在 WSL 已装 Bun、但未加载 shell PATH 时仍能检测到 `bun` / `bunx`
 - `ccusage_install_tools(target="wsl")` 返回手动安装错误，不得启动任何安装命令
 - 前端设置页的 WSL 状态按钮在 `ready / manual / unavailable / multi-distro` 四种状态下文案一致

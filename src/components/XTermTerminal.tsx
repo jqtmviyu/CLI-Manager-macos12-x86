@@ -23,6 +23,8 @@ import {
 } from "../lib/terminalThemes";
 import { backgroundAssetUrl } from "../lib/assetUrl";
 import { TERMINAL_FILE_PATH_MIME } from "../lib/aiPathFormatter";
+import { useI18n } from "../lib/i18n";
+import { isDirectCodexStartupCommand } from "../lib/projectStartupCommand";
 import { endTerminalFileDrag, getTerminalFileDragText } from "../lib/terminalFileDrag";
 import {
   defaultShellForOs,
@@ -71,6 +73,9 @@ const XTERM_INVERSE_FLAG = 0x04000000;
 const TUI_COMPOSER_PRELUDE_ROWS = 1;
 const TUI_COMPOSER_CONTINUATION_ROWS = 4;
 const TUI_COMPOSER_PROMPT_PATTERN = /^[\u203a\u276f\u00bb\u2023>]\s?/u;
+const AI_TUI_VIEWPORT_PATTERN = /(?:openai\s+codex|claude\s+code|yolo\s+mode|mcp\s+(?:client|startup)|\/model\s+to\s+change)/i;
+const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
+const CLAUDE_COMMAND_PATTERN = /(?:^|\s)claude(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
 
 type SpecialColorQueryId = 10 | 11;
 
@@ -148,23 +153,6 @@ const hexToRgba = (value: string | undefined, alpha: number, fallback: string) =
   const g = Number.parseInt(hex.slice(2, 4), 16);
   const b = Number.parseInt(hex.slice(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-};
-
-const hexToRgb = (value: string | undefined): [number, number, number] | null => {
-  const normalized = normalizeHexColor(value, "");
-  if (!normalized) return null;
-  return [
-    Number.parseInt(normalized.slice(1, 3), 16),
-    Number.parseInt(normalized.slice(3, 5), 16),
-    Number.parseInt(normalized.slice(5, 7), 16),
-  ];
-};
-
-const isLightHexColor = (value: string | undefined) => {
-  const rgb = hexToRgb(value);
-  if (!rgb) return false;
-  const [r, g, b] = rgb;
-  return 0.299 * r + 0.587 * g + 0.114 * b > 160;
 };
 
 const parseSpecialColorQuery = (body: string): SpecialColorQueryId | null => {
@@ -270,6 +258,7 @@ interface Props extends TerminalContextMenuActions {
 }
 
 export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fontSize = 14, fontFamily = "Cascadia Code, Consolas, monospace", resolvedTheme = "dark", terminalThemeName = "auto", lightThemePalette = "warm-paper", darkThemePalette = "night-indigo", onNewTab, onCloseSession, onCloseOthers, onCloseToLeft, onCloseToRight, onSplitRight, onSplitDown }: Props) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -290,7 +279,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const tuiComposerNormalizeRafRef = useRef<number | null>(null);
   const runtimeOscBufferRef = useRef("");
   const specialOscBufferRef = useRef("");
-  const terminalBackgroundIsLightRef = useRef(false);
   const terminalColorRepliesRef = useRef<{ foreground: string; background: string }>({
     foreground: formatSpecialColorReply(10, "#d8dee9"),
     background: formatSpecialColorReply(11, "#0c0e10"),
@@ -368,7 +356,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   isTransparentRef.current = isTransparent;
 
   const syncWebglRenderer = (terminal: Terminal, theme: ReturnType<typeof getTerminalTheme>) => {
-    const shouldUseWebgl = !isLightTerminalTheme(theme);
+    const shouldUseWebgl = !isTransparentRef.current && !isLightTerminalTheme(theme);
     if (!shouldUseWebgl) {
       if (!webglAddonRef.current) return false;
       webglAddonRef.current?.dispose();
@@ -441,18 +429,40 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     useTerminalStore.getState().handleShellRuntimeEvent({ sessionId, event, exitCode, origin: "osc" });
   };
 
-  const isCodexSession = () => {
+  const getSessionToolContext = () => {
     const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
     const project = session?.projectId
       ? useProjectStore.getState().projects.find((item) => item.id === session.projectId)
       : null;
-    if (project?.cli_tool.trim().toLowerCase() === "codex") return true;
-    const startupCmd = session?.startupCmd?.toLowerCase() ?? "";
-    const titleTool = session?.title.match(/\(([^()]*)\)\s*$/)?.[1]?.trim().toLowerCase() ?? "";
-    return titleTool === "codex" || /(?:^|\s)codex(?:\s|$)/.test(startupCmd);
+    return {
+      projectTool: project?.cli_tool.trim().toLowerCase() ?? "",
+      startupCmd: session?.startupCmd ?? "",
+      titleTool: session?.title.match(/\(([^()]*)\)\s*$/)?.[1]?.trim().toLowerCase() ?? "",
+    };
   };
 
-  const shouldNormalizeTuiComposerBackground = () => terminalBackgroundIsLightRef.current;
+  const isCodexSession = () => {
+    const context = getSessionToolContext();
+    return (
+      context.projectTool === "codex"
+      || context.titleTool === "codex"
+      || CODEX_COMMAND_PATTERN.test(context.startupCmd)
+    );
+  };
+
+  const isClaudeOrCodexSession = () => {
+    const context = getSessionToolContext();
+    return (
+      context.projectTool === "codex"
+      || context.projectTool.includes("claude")
+      || context.titleTool === "codex"
+      || context.titleTool.includes("claude")
+      || CODEX_COMMAND_PATTERN.test(context.startupCmd)
+      || CLAUDE_COMMAND_PATTERN.test(context.startupCmd)
+    );
+  };
+
+  const shouldNormalizeTuiComposerBackground = () => isTransparentRef.current;
 
   // 私有 OSC 777：session=<id>;event=<name>[;exit=<code>]
   const handleLegacyRuntimeOsc = (body: string) => {
@@ -604,28 +614,41 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     if (!shouldNormalizeTuiComposerBackground()) return;
     const buffer = terminal.buffer.active;
     const probeCell = buffer.getNullCell() as MutableXtermCell;
+    const minRow = 0;
 
     const getViewportLine = (row: number) => buffer.getLine(buffer.viewportY + row);
     const normalizePromptText = (line: IBufferLine) => (
       line.translateToString(true).trimStart().replace(TUI_BORDER_PREFIX_PATTERN, "")
     );
     const isTuiPromptLine = (line: IBufferLine) => TUI_COMPOSER_PROMPT_PATTERN.test(normalizePromptText(line));
+    const hasKnownAiTuiSignature = () => {
+      for (let row = minRow; row < terminal.rows; row += 1) {
+        const line = getViewportLine(row);
+        if (line && AI_TUI_VIEWPORT_PATTERN.test(line.translateToString(true))) return true;
+      }
+      return false;
+    };
     const getLineBackgroundState = (line: IBufferLine) => {
       const limit = Math.min(terminal.cols, line.length);
       let hasExplicitBackground = false;
       let inverseCells = 0;
+      let hasInverse = false;
       for (let x = 0; x < limit; x += 1) {
         const cell = line.getCell(x, probeCell);
         if (!cell) continue;
         if (cell.getBgColorMode() !== 0) hasExplicitBackground = true;
-        if (cell.isInverse() !== 0) inverseCells += 1;
+        if (cell.isInverse() !== 0) {
+          hasInverse = true;
+          inverseCells += 1;
+        }
       }
       return {
         hasExplicitBackground,
+        hasInverse,
         hasWideInverse: inverseCells >= Math.max(4, Math.floor(terminal.cols * 0.25)),
       };
     };
-    const clearLineBackground = (line: IBufferLine, clearWideInverse: boolean) => {
+    const clearLineBackground = (line: IBufferLine, clearInverse: boolean) => {
       const mutableLine = (line as XtermBufferLineApiView)._line;
       if (!mutableLine) return false;
       const limit = Math.min(terminal.cols, mutableLine.length);
@@ -634,7 +657,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
         mutableLine.loadCell(x, probeCell);
         // Drop only visual field styling; keep text colors and other flags.
         const nextBg = probeCell.bg & ~XTERM_BG_COLOR_MASK;
-        const nextFg = clearWideInverse ? probeCell.fg & ~XTERM_INVERSE_FLAG : probeCell.fg;
+        const nextFg = clearInverse ? probeCell.fg & ~XTERM_INVERSE_FLAG : probeCell.fg;
         if (nextBg === probeCell.bg && nextFg === probeCell.fg) continue;
         probeCell.bg = nextBg;
         probeCell.fg = nextFg;
@@ -644,9 +667,25 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       return changed;
     };
 
-    const minRow = 0;
     let firstChangedRow = terminal.rows;
     let lastChangedRow = -1;
+
+    if (isClaudeOrCodexSession() || hasKnownAiTuiSignature()) {
+      for (let row = minRow; row < terminal.rows; row += 1) {
+        const line = getViewportLine(row);
+        if (!line) continue;
+        const backgroundState = getLineBackgroundState(line);
+        if (!backgroundState.hasExplicitBackground && !backgroundState.hasInverse) continue;
+        if (!clearLineBackground(line, backgroundState.hasInverse)) continue;
+        firstChangedRow = Math.min(firstChangedRow, row);
+        lastChangedRow = Math.max(lastChangedRow, row);
+      }
+      if (lastChangedRow >= firstChangedRow) {
+        terminal.refresh(firstChangedRow, lastChangedRow);
+      }
+      return;
+    }
+
     for (let promptRow = terminal.rows - 1; promptRow >= minRow; promptRow -= 1) {
       const promptLine = getViewportLine(promptRow);
       if (!promptLine || !isTuiPromptLine(promptLine)) continue;
@@ -849,10 +888,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       allowProposedApi: true,
       windowsPty: { backend: "conpty" },
       minimumContrastRatio: getTerminalMinimumContrastRatio(baseTheme),
-      // Always true — research confirms WebglAddon stays compatible and the
-      // perf cost is acceptable. xterm cannot toggle this after construction,
-      // so we pay it unconditionally to avoid having to recreate the terminal
-      // when the user enables/disables the background image.
+      // xterm cannot toggle transparency after construction, so keep it enabled
+      // even though WebGL is disabled while a background image is active.
       allowTransparency: true,
       theme: isTransparentRef.current ? applyTransparency(baseTheme, background.overlayDarken) : baseTheme,
       // OSC 8 超链接（codex 等 CLI 输出）默认点击行为是 window.open，在 Tauri
@@ -890,7 +927,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     });
 
     let webglAddon: WebglAddon | null = null;
-    if (!isLightTerminalTheme(baseTheme)) {
+    if (!isTransparentRef.current && !isLightTerminalTheme(baseTheme)) {
       try {
         webglAddon = new WebglAddon();
       // GPU 上下文丢失（驱动崩溃 / GPU 进程重启 / 长会话）后 WebGL 渲染会僵死。
@@ -1072,7 +1109,8 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
 
     terminal.onData((data) => {
       markAttentionInputHandled();
-      invoke("pty_write", { sessionId, data }).catch((err) => reportPtyWriteError("onData", err));
+      const ptyData = data === "\r" && isDirectCodexStartupCommand(inputBuffer.current) ? "\x0c\r" : data;
+      invoke("pty_write", { sessionId, data: ptyData }).catch((err) => reportPtyWriteError("onData", err));
 
       if (data === "\r") {
         const cmd = inputBuffer.current;
@@ -1643,7 +1681,6 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
   const backgroundColor = getTerminalBackground(terminalThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
   const backgroundOverlayColor = getTerminalBackgroundOverlayColor(terminalTheme);
   const showBackgroundImage = isTransparent && assetUrl !== null;
-  terminalBackgroundIsLightRef.current = isLightHexColor(backgroundColor);
   terminalColorRepliesRef.current = {
     foreground: formatSpecialColorReply(10, normalizeHexColor(terminalTheme.foreground, "#d8dee9")),
     background: formatSpecialColorReply(11, normalizeHexColor(terminalTheme.background, backgroundColor)),
@@ -1763,6 +1800,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     closeContextMenu();
     if (!terminal) return;
     void copyTextToClipboard(serializeBufferPlainText(terminal));
+    terminal.focus();
+  };
+
+  const handleMenuClear = () => {
+    const terminal = terminalRef.current;
+    closeContextMenu();
+    if (!terminal) return;
+    useTerminalStore.getState().markAttentionInputHandled(sessionId);
+    invoke("pty_write", { sessionId, data: "\x0c" }).catch((err) => reportPtyWriteError("clear", err));
     terminal.focus();
   };
 
@@ -1932,7 +1978,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
               disabled={!menuState.hasSelection}
               onClick={handleMenuCopy}
             >
-              <span>复制</span>
+              <span>{t("terminal.contextMenu.copy")}</span>
               <span className="terminal-context-menu-hint">Ctrl+C</span>
             </button>
             <button
@@ -1941,7 +1987,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
               className="terminal-context-menu-item"
               onClick={handleMenuPaste}
             >
-              <span>粘贴</span>
+              <span>{t("terminal.contextMenu.paste")}</span>
               <span className="terminal-context-menu-hint">Ctrl+V</span>
             </button>
             <button
@@ -1950,7 +1996,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
               className="terminal-context-menu-item"
               onClick={handleMenuSelectAll}
             >
-              <span>全选</span>
+              <span>{t("terminal.contextMenu.selectAll")}</span>
             </button>
             <button
               type="button"
@@ -1958,7 +2004,15 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
               className="terminal-context-menu-item"
               onClick={handleMenuCopyAll}
             >
-              <span>复制全部输出</span>
+              <span>{t("terminal.contextMenu.copyAll")}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="terminal-context-menu-item"
+              onClick={handleMenuClear}
+            >
+              <span>{t("terminal.contextMenu.clear")}</span>
             </button>
             {hasManageActions && (
               <>
@@ -1970,7 +2024,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runMenuAction(onNewTab)}
                   >
-                    <span>新建终端</span>
+                    <span>{t("terminal.toolbar.newTerminal")}</span>
                   </button>
                 )}
                 {onCloseSession && (
@@ -1980,7 +2034,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runMenuAction(onCloseSession)}
                   >
-                    <span>关闭终端</span>
+                    <span>{t("terminal.tab.closeCurrent")}</span>
                   </button>
                 )}
                 {onCloseOthers && (
@@ -1990,7 +2044,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runMenuAction(onCloseOthers)}
                   >
-                    <span>关闭其它终端</span>
+                    <span>{t("terminal.tab.closeOthers")}</span>
                   </button>
                 )}
                 {onCloseToLeft && (
@@ -2000,7 +2054,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runMenuAction(onCloseToLeft)}
                   >
-                    <span>关闭左侧终端</span>
+                    <span>{t("terminal.tab.closeLeft")}</span>
                   </button>
                 )}
                 {onCloseToRight && (
@@ -2010,7 +2064,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runMenuAction(onCloseToRight)}
                   >
-                    <span>关闭右侧终端</span>
+                    <span>{t("terminal.tab.closeRight")}</span>
                   </button>
                 )}
                 {(onSplitRight || onSplitDown) && <div className="terminal-context-menu-separator" role="separator" />}
@@ -2021,7 +2075,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runSplitMenuAction(onSplitRight)}
                   >
-                    <span>向右分屏</span>
+                    <span>{t("terminal.tab.splitRight")}</span>
                   </button>
                 )}
                 {onSplitDown && (
@@ -2031,7 +2085,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
                     className="terminal-context-menu-item"
                     onClick={() => runSplitMenuAction(onSplitDown)}
                   >
-                    <span>向下分屏</span>
+                    <span>{t("terminal.tab.splitDown")}</span>
                   </button>
                 )}
               </>

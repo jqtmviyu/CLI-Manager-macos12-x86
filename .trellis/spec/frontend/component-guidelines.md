@@ -664,6 +664,52 @@ terminal.options.theme = isTransparent ? applyTransparency(theme) : theme;
 
 **Fix**: Keep the construction effect's deps as `[sessionId]`. Add a separate hot-update effect that mutates `terminal.options.*` for the changed setting. xterm supports hot-mutating `fontSize`, `fontFamily`, `theme`, `cursorBlink`, `cursorStyle`, `scrollback` without rebuild. Only `allowTransparency`, `cols`/`rows` (use Fit instead), and `rendererType` (legacy) require rebuild.
 
+### Common Mistake: Treating Codex half-screen scrolling as a scrollbar bug
+
+**Symptom**: After shell output such as `dir`, starting Codex leaves the old output visible above Codex, while Codex scrolls only in the lower part of the terminal. Increasing terminal font size may make the outer scrollbar reappear, but that is only exposing the same state more clearly.
+
+**Cause**: Codex is launched from the current shell cursor position instead of a clean viewport. The problem is the pre-launch screen state, not xterm scrollbar CSS, Codex `--no-alt-screen`, `TERM=dumb`, or terminal recreation.
+
+**Fix**: Before direct Codex launches, send form feed (`\x0c`, Ctrl+L) to the PTY, then execute the command. Apply this to both automatic startup commands and manually typed direct `codex` commands on Enter. Keep the match narrow: direct commands such as `codex`, `codex.cmd`, `codex.exe`, and `codex.ps1` only.
+
+**Wrong**:
+
+```typescript
+invoke("pty_write", { sessionId, data: `${command}\r` });
+```
+
+**Correct**:
+
+```typescript
+const clearBeforeLaunch = isDirectCodexStartupCommand(command) ? "\x0c" : "";
+invoke("pty_write", { sessionId, data: `${clearBeforeLaunch}${command}\r` });
+```
+
+**Prevention**: When a TUI appears to scroll inside a partial screen, reproduce with prior shell output still visible. If old output remains above the TUI, fix the launch input sequence before changing scrollbar styles, TERM, alternate-screen flags, or xterm construction.
+
+### Common Mistake: Clearing xterm directly for user-facing clear screen
+
+**Symptom**: After a right-click "clear screen" action, the terminal output is cleared but IME candidate windows still open at the old pre-clear cursor position.
+
+**Cause**: `terminal.clear()` mutates the xterm buffer directly and bypasses the normal PTY/shell input path. In `XTermTerminal`, IME positioning depends on xterm's helper textarea and composition anchoring. Bypassing the input path can leave the helper textarea anchored to stale pre-clear geometry.
+
+**Wrong**:
+
+```tsx
+terminal.clear();
+terminal.focus();
+```
+
+**Correct**:
+
+```tsx
+useTerminalStore.getState().markAttentionInputHandled(sessionId);
+invoke("pty_write", { sessionId, data: "\x0c" });
+terminal.focus();
+```
+
+**Prevention**: For user-facing terminal clear actions, send Ctrl+L (`\x0c`) through `pty_write` so the shell/TUI clears or redraws through the same path as keyboard input. Reserve `terminal.clear()` for internal buffer maintenance where IME/helper textarea position is irrelevant.
+
 ### Common Mistake: Treating `cursorBlink` as full cursor visibility control
 
 **Symptom**: A TUI such as Codex still shows rapid cursor flashing after `cursorBlink` is set to `false`.
@@ -792,7 +838,7 @@ terminal.write(chunk, () => {
 });
 ```
 
-When using xterm internals, keep the hack small and version-scoped. xterm 6 exposes a read-only public `IBufferLine`, but the runtime `BufferLineApiView` keeps the mutable line on `_line`. Clear only the visual field styling on light themes: explicit background color bits (`0x03ffffff`) and, only when inverse spans a wide part of the prompt row, the inverse flag (`0x04000000`). Do not clear isolated inverse cells; those may be the TUI caret.
+When using xterm internals, keep the hack small and version-scoped. xterm 6 exposes a read-only public `IBufferLine`, but the runtime `BufferLineApiView` keeps the mutable line on `_line`. Clear only the visual field styling when the theme/background mode makes stale TUI fields harmful, such as light themes or active terminal background-image transparency: explicit background color bits (`0x03ffffff`) and, only when inverse spans a wide part of a known bad row, the inverse flag (`0x04000000`). Do not clear isolated inverse cells; those may be the TUI caret.
 
 ```tsx
 const mutableLine = (line as IBufferLine & { _line?: MutableLine })._line;
@@ -804,6 +850,12 @@ terminal.refresh(row, row);
 ```
 
 **Prevention**: Do not keep broadening ANSI filters after the first miss. If the defect is a visual xterm cell state, inspect or correct `terminal.buffer.active` after the write callback. Gate the fix narrowly by theme brightness and prompt signature, not only by shell/tool name; Claude and Codex can emit similar composer styling through different shells. Codex may put the dark field on the row immediately before the visible `›` prompt, so include a small prelude range when normalizing prompt rows. Submitted prompt rows can move to the upper visible viewport after output arrives, so scan the whole visible viewport, not only the bottom prompt area. Tab restore and resize can trigger an xterm repaint after React visibility effects; coalesce a post-`onRender` normalization with `requestAnimationFrame` so restored tabs do not redraw stale composer backgrounds.
+
+For terminal background images, active transparency mode is an appearance-mode gate equivalent to theme brightness. Keep prompt detection narrow, but do not block normalization only because the terminal theme is dark; dark themes can still expose stale explicit backgrounds as opaque boxes over the image.
+
+If a CLI draws large opaque panels or status rows over a terminal background image, remember that CLI themes only affect which ANSI colors are emitted; they do not make ANSI background cells transparent. For known full-screen AI TUIs such as Claude/Codex, the background-image mode may clear explicit background attrs and inverse flags across the visible viewport. Keep that broad pass gated by active transparency plus the known TUI session or a visible TUI signature; use the narrower prompt-row correction for unknown tools.
+
+Do not keep WebGL enabled while a terminal background image is active. The default renderer is the safer path for transparent backgrounds and xterm buffer-attr corrections; WebGL can preserve or redraw opaque TUI cells in ways that make Codex/Ratatui panels appear as black blocks.
 
 ### Convention: xterm Windows PTY and paste handling
 
@@ -842,4 +894,37 @@ invoke("pty_write", { sessionId, data });
 - [ ] Windows 10 + PowerShell retains scrollback after tab switch / resize / fit.
 - [ ] Claude Code multi-line paste preserves line order and is not submitted line-by-line.
 - [ ] CMD still accepts normal paste and Enter behavior.
+
+### Common Mistake: Letting xterm sync updates clear the screen while the user is reading scrollback
+
+**Symptom**: During Codex / Claude Code / Copilot-style TUI streaming, scrolling upward to inspect older output becomes impossible, or a later resize causes the current screen to be replayed into scrollback.
+
+**Cause**: Modern TUIs can wrap redraw bursts in `DECSET/DECRST 2026` sync-update blocks and emit `CSI 2 J` / `CSI 3 J` clears inside those bursts. In `@xterm/xterm` 6.x on embedded terminals, those clears can yank the viewport back to the live screen or amplify resize redraws, especially on Windows ConPTY.
+
+**Fix**: Keep the workaround in the frontend xterm stream path, not in the Rust PTY backend. Track whether the user has scrolled away from bottom, detect `\x1b[?2026h` / `\x1b[?2026l`, and while a sync-update block is active drop `CSI 2 J` / `CSI 3 J` only when preserving scrollback matters. Also defer opportunistic `fit()` calls until the sync-update block ends.
+
+**Correct**:
+
+```tsx
+if (
+  syncUpdateDepthRef.current > 0
+  && shouldPreserveViewportDuringSync()
+  && (sequence === "\x1b[2J" || sequence === "\x1b[3J")
+) {
+  continue;
+}
+```
+
+**Wrong**:
+
+```tsx
+// Do not globally strip screen-clearing sequences for every terminal frame.
+text = text.replace(/\x1b\[[23]J/g, "");
+```
+
+**Prevention**:
+
+- [ ] When terminal scrollback breaks only during agent/TUI streaming, inspect sync-update and clear-screen sequences before changing PTY/backend logic.
+- [ ] Scope clear-screen filtering to the "user is reading history" case; do not degrade normal at-bottom TUI redraw fidelity.
+- [ ] If resize is noisy during TUI streaming, prefer deferring `fit()` rather than rebuilding the terminal or forcing outer-container scroll resets.
 

@@ -1591,7 +1591,7 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
     if (!open) return;
     void checkStatus().catch(() => {});
     void loadCachedReport().catch(() => {});
-  }, [open, source, ccusageUseWsl, claudeConfigDir, codexConfigDir, checkStatus, loadCachedReport]);
+  }, [open, source, ccusageUseWsl, claudeConfigDir, codexConfigDir, toolStatus?.wsl?.distro, checkStatus, loadCachedReport]);
 
   useEffect(() => {
     if (!open) return;
@@ -1626,13 +1626,14 @@ export function CcusageStatsPanel({ open, onClose }: CcusageStatsPanelProps) {
   const sourceOption = SOURCE_OPTIONS.find((option) => option.value === source) ?? SOURCE_OPTIONS[0];
   const sourceLabel = sourceOption.labelKey ? t(sourceOption.labelKey) : sourceOption.label;
   const sourceDescription = t(sourceOption.descriptionKey);
+  const fallbackWslDistro = toolStatus?.wsl?.distro ?? null;
   const runtimeScope = useMemo(
-    () => resolveCcusageRuntimeScope(source, claudeConfigDir, codexConfigDir, ccusageUseWsl),
-    [ccusageUseWsl, claudeConfigDir, codexConfigDir, source]
+    () => resolveCcusageRuntimeScope(source, claudeConfigDir, codexConfigDir, ccusageUseWsl, fallbackWslDistro),
+    [ccusageUseWsl, claudeConfigDir, codexConfigDir, fallbackWslDistro, source]
   );
   const wslTarget = useMemo(
-    () => resolveCcusageWslTarget(claudeConfigDir, codexConfigDir),
-    [claudeConfigDir, codexConfigDir]
+    () => resolveCcusageWslTarget(claudeConfigDir, codexConfigDir, fallbackWslDistro),
+    [claudeConfigDir, codexConfigDir, fallbackWslDistro]
   );
   const hostReady = toolStatus?.host.bunxAvailable === true;
   const activeWslDistro = runtimeScope.kind === "wsl" ? runtimeScope.distro : null;
