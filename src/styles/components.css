@@ -4219,12 +4219,12 @@
   color: var(--on-surface);
 }
 
-.ui-file-tree-row:hover,
-.ui-file-tree-row[data-selected="true"] {
-  background: var(--interactive-hover-bg);
+.ui-file-tree-row:hover {
+  background-color: color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 13%, transparent);
 }
 
 .ui-file-tree-row[data-selected="true"] {
+  background-color: var(--interactive-selected-bg);
   color: var(--primary);
 }
 
