@@ -1,5 +1,65 @@
 # App Startup Contracts
 
+## Scenario: Debug-mode F12 DevTools
+
+### 1. Scope / Trigger
+
+- Trigger: 修改主窗口 DevTools 打开入口、F12 调试快捷键、`debugMode` 行为或 Tauri `devtools` feature 时。
+
+### 2. Signatures
+
+- Frontend setting: `settingsStore.debugMode: boolean`
+- Frontend handler: `src/App.tsx` 捕获 `KeyboardEvent.key === "F12"`
+- Backend command: `app_open_devtools(app: AppHandle) -> Result<(), String>`
+- Tauri feature: `tauri = { features = ["devtools", ...] }`
+
+### 3. Contracts
+
+- `debugMode=false` 时，前端必须拦截 F12 并阻止默认 DevTools 行为，但不得调用 `app_open_devtools`。
+- `debugMode=true` 时，前端必须拦截 F12 并调用 `app_open_devtools` 打开主窗口 DevTools。
+- `app_open_devtools` 只负责打开已存在的 `main` WebView DevTools，不读取或修改设置。
+- Release 构建需要启用 Tauri `devtools` feature，否则 Rust 侧 DevTools API 不可用。
+
+### 4. Validation & Error Matrix
+
+- `main` 窗口存在 -> 打开 DevTools 并返回 `Ok(())`。
+- `main` 窗口不存在 -> 返回 `"main window not found"`。
+- 前端非 Tauri 环境 -> 不注册 F12 处理器。
+- 后端打开失败 -> 前端只记录 warn，不弹出用户提示。
+
+### 5. Good/Base/Bad Cases
+
+- Good: 开启调试模式后按 F12 打开 DevTools；关闭后按 F12 无效果。
+- Base: 调试模式仍继续驱动现有 debug logging 开关。
+- Bad: 只启用 Tauri `devtools` feature 而不拦截 F12，导致关闭调试模式时仍可打开 DevTools。
+
+### 6. Tests Required
+
+- 前端类型检查：`npx tsc --noEmit`
+- 后端编译检查：`cd src-tauri && cargo check`
+- 手动验证：设置 -> 通用 -> 调试模式关闭时 F12 无效果；开启后 F12 打开 DevTools。
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+window.addEventListener("keydown", (event) => {
+  if (event.key === "F12") invoke("app_open_devtools");
+});
+```
+
+#### Correct
+
+```tsx
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "F12") return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (useSettingsStore.getState().debugMode) invoke("app_open_devtools");
+}, true);
+```
+
 ## Scenario: Development Single-Instance Domain
 
 ### 1. Scope / Trigger

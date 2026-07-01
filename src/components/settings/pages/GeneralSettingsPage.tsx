@@ -412,6 +412,7 @@ export function GeneralSettingsPage() {
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
+  const debugMode = useSettingsStore((s) => s.debugMode);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const update = useSettingsStore((s) => s.update);
   const ccusageToolStatus = useCcusageStore((s) => s.toolStatus);
@@ -894,6 +895,22 @@ export function GeneralSettingsPage() {
               </Group>
             </Card>
         </Stack>
+      </section>
+
+      <section className="ui-surface-card rounded-2xl border border-border p-4">
+        <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+          <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+            <Text size="xs" c="var(--on-surface-variant)">
+              {t("settings.general.debugMode")}
+            </Text>
+            <Switch
+              color="cliPrimary"
+              checked={debugMode}
+              onChange={(event) => void update("debugMode", event.currentTarget.checked)}
+              aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
+            />
+          </Group>
+        </Card>
       </section>
       <Dialog open={ccusageWslDialogOpen} onOpenChange={setCcusageWslDialogOpen}>
         <DialogContent className="max-w-[680px]">

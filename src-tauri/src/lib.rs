@@ -33,6 +33,15 @@ fn app_show_main_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn app_open_devtools(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.open_devtools();
+    Ok(())
+}
+
 fn migrations() -> Vec<Migration> {
     vec![
         Migration {
@@ -367,6 +376,7 @@ pub fn run() {
             commands::sync::sync_local_import,
             commands::version::get_app_version,
             commands::version::get_os_platform,
+            app_open_devtools,
             commands::fonts::list_system_fonts,
             commands::background::save_background_image,
             commands::background::cleanup_unused_backgrounds,

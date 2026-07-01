@@ -124,7 +124,6 @@ export function ThemeSettingsPage() {
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const confirmBeforeClosingTerminalTab = useSettingsStore((s) => s.confirmBeforeClosingTerminalTab);
   const terminalTabHoverInfoEnabled = useSettingsStore((s) => s.terminalTabHoverInfoEnabled);
-  const debugMode = useSettingsStore((s) => s.debugMode);
   const shellRuntimeMonitoringEnabled = useSettingsStore((s) => s.shellRuntimeMonitoringEnabled);
   const batchLaunchGroupInPane = useSettingsStore((s) => s.batchLaunchGroupInPane);
   const batchLaunchPaneDirection = useSettingsStore((s) => s.batchLaunchPaneDirection);
@@ -522,20 +521,6 @@ export function ThemeSettingsPage() {
                       ? t("settings.general.disableTabHoverInfo")
                       : t("settings.general.enableTabHoverInfo")
                   }
-                />
-              </Group>
-            </Card>
-
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.general.debugMode")}
-                </Text>
-                <Switch
-                  color="cliPrimary"
-                  checked={debugMode}
-                  onChange={(event) => void update("debugMode", event.currentTarget.checked)}
-                  aria-label={debugMode ? t("settings.general.disableDebugMode") : t("settings.general.enableDebugMode")}
                 />
               </Group>
             </Card>

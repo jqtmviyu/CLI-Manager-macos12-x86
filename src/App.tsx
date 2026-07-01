@@ -373,6 +373,7 @@ function App() {
   const viewMode = useSettingsStore((s) => s.viewMode);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
+  const debugMode = useSettingsStore((s) => s.debugMode);
   const lastSettingsTab = useSettingsStore((s) => s.lastSettingsTab);
   const updateSetting = useSettingsStore((s) => s.update);
   const openHistory = useHistoryStore((s) => s.openHistory);
@@ -417,6 +418,19 @@ function App() {
       .then((platform) => setIsMacOs(platform === "macos"))
       .catch((err) => logWarn("Failed to read OS platform for window sizing", err));
   }, []);
+
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    const handleF12 = (event: KeyboardEvent) => {
+      if (event.key !== "F12") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!debugMode) return;
+      void invoke("app_open_devtools").catch((err) => logWarn("Failed to open devtools", err));
+    };
+    window.addEventListener("keydown", handleF12, true);
+    return () => window.removeEventListener("keydown", handleF12, true);
+  }, [debugMode]);
 
   const runCloseAutoSync = useCallback(async () => {
     const result = await useSyncStore.getState().runAutoSync("close");
