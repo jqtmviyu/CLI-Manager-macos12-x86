@@ -2919,15 +2919,43 @@
     color var(--animate-duration-fast) var(--ease-standard);
 }
 
+.ui-terminal-tab-list-popover {
+  background-color: color-mix(in srgb, var(--menu-bg) 96%, var(--menu-fg) 4%);
+  border-color: var(--menu-border);
+  color: var(--menu-fg);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--menu-bg) 62%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.ui-terminal-tab-list-title {
+  color: color-mix(in srgb, var(--menu-fg) 88%, transparent);
+}
+
+.ui-terminal-tab-list-popover .ui-terminal-tab-list-item {
+  color: color-mix(in srgb, var(--menu-fg) 74%, transparent);
+}
+
 .ui-terminal-tab-list-item:hover,
 .ui-terminal-tab-list-item[data-selected="true"] {
   color: var(--on-surface);
   background-color: color-mix(in srgb, var(--surface-container) 86%, transparent);
 }
 
+.ui-terminal-tab-list-popover .ui-terminal-tab-list-item:hover,
+.ui-terminal-tab-list-popover .ui-terminal-tab-list-item[data-selected="true"] {
+  color: var(--menu-fg);
+  background-color: var(--menu-hover);
+}
+
 .ui-terminal-tab-list-item[data-selected="true"] {
   border-color: color-mix(in srgb, var(--interactive-selected-border) 44%, transparent);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 28%, transparent);
+}
+
+.ui-terminal-tab-list-popover .ui-terminal-tab-list-item[data-selected="true"] {
+  border-color: var(--menu-border);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--menu-fg) 16%, transparent);
 }
 
 .ui-terminal-pane-chrome .ui-terminal-tab-close:hover,

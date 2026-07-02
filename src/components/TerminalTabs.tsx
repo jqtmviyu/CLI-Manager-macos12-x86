@@ -1009,11 +1009,12 @@ function PaneTabBar({
             </PopoverTrigger>
             <PopoverContent
               align="end"
-              className="w-64 p-1.5"
+              className="terminal-skin ui-terminal-tab-list-popover w-64 p-1.5"
+              style={tabMenuStyle}
               onOpenAutoFocus={(event) => event.preventDefault()}
               onCloseAutoFocus={(event) => event.preventDefault()}
             >
-              <div className="px-2 py-1 text-[11px] font-semibold text-on-surface">{t("terminal.tab.tabs")}</div>
+              <div className="ui-terminal-tab-list-title px-2 py-1 text-[11px] font-semibold">{t("terminal.tab.tabs")}</div>
               <div className="max-h-72 overflow-y-auto">
                 {paneSessions.map((session, index) => {
                   const notification = tabNotifications[session.id] ?? "none";
