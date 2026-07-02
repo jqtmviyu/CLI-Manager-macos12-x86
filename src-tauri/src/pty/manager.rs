@@ -20,6 +20,73 @@ const MIN_PTY_COLS: u16 = 40;
 const MIN_PTY_ROWS: u16 = 8;
 const GIT_BASH_INITIAL_OUTPUT_DELAY_MS: u64 = 250;
 
+/// Debug 诊断（CLI_MANAGER_DEBUG=1）：统计影响滚动条/回滚的关键 VT 序列，
+/// 用于排查 Codex 等 TUI 在不同机器上滚动条表现不一致的问题。
+/// 判定：出现 `?1049h` 说明 TUI 进了 alternate screen（xterm.js 备用缓冲区无
+/// scrollback，滚动条必然消失）；出现 `3J` 说明普通缓冲区回滚被主动清空；
+/// DECSTBM/RI 是区域滚动重绘路径（xterm.js 中不进 scrollback）的证据。
+#[derive(Default)]
+struct VtScrollDiag {
+    alt_enter: u64,
+    alt_exit: u64,
+    ed2: u64,
+    ed3: u64,
+    decstbm: u64,
+    ri: u64,
+}
+
+/// 调用方需保证 data 处于 ANSI 序列安全边界内（safe_emit_boundary 已保证），
+/// 否则跨块被切半的序列会漏计。
+fn scan_vt_scroll_sequences(data: &[u8], diag: &mut VtScrollDiag, session_id: &str) {
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] != 0x1b {
+            i += 1;
+            continue;
+        }
+        // ESC M = RI（reverse index），区域滚动插入历史的常用路径
+        if data[i + 1] == b'M' {
+            if diag.ri == 0 {
+                debug!("pty vt-diag: id={session_id}, first RI (ESC M)");
+            }
+            diag.ri += 1;
+            i += 2;
+            continue;
+        }
+        if data[i + 1] != b'[' {
+            i += 1;
+            continue;
+        }
+        let params_start = i + 2;
+        let mut j = params_start;
+        while j < data.len() && matches!(data[j], b'0'..=b'9' | b';' | b'?') {
+            j += 1;
+        }
+        if j >= data.len() {
+            break;
+        }
+        let params = &data[params_start..j];
+        let hit: Option<(&mut u64, &str)> = match (data[j], params) {
+            (b'h', b"?1049") => Some((&mut diag.alt_enter, "alt-screen enter (?1049h)")),
+            (b'l', b"?1049") => Some((&mut diag.alt_exit, "alt-screen exit (?1049l)")),
+            (b'J', b"2") => Some((&mut diag.ed2, "ED2 clear screen (2J)")),
+            (b'J', b"3") => Some((&mut diag.ed3, "ED3 clear scrollback (3J)")),
+            // 排除 `CSI ? Pm r`（DEC 私有模式 restore），其余 `CSI Ps;Ps r` 按 DECSTBM 计
+            (b'r', p) if !p.starts_with(b"?") => {
+                Some((&mut diag.decstbm, "DECSTBM scroll region (r)"))
+            }
+            _ => None,
+        };
+        if let Some((count, name)) = hit {
+            if *count == 0 {
+                debug!("pty vt-diag: id={session_id}, first {name}");
+            }
+            *count += 1;
+        }
+        i = j + 1;
+    }
+}
+
 pub struct PtySession {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
@@ -451,6 +518,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             let mut buf = [0u8; READER_BUF_SIZE];
             let mut pending: Vec<u8> = Vec::with_capacity(READER_FLUSH_THRESHOLD * 2);
             let mut reader_end_reason = "eof".to_string();
+            // 仅 debug 日志开启时扫描 VT 序列，正常运行零扫描开销
+            let vt_diag_enabled = log::log_enabled!(log::Level::Debug);
+            let mut vt_diag = VtScrollDiag::default();
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
@@ -464,6 +534,13 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                             // 残尾保留到下一轮拼接，避免前端 xterm 把残字节解读为 SGR 参数。
                             let safe = safe_emit_boundary(&pending);
                             if safe > 0 {
+                                if vt_diag_enabled {
+                                    scan_vt_scroll_sequences(
+                                        &pending[..safe],
+                                        &mut vt_diag,
+                                        &session_id_owned,
+                                    );
+                                }
                                 let encoded = STANDARD.encode(&pending[..safe]);
                                 let _ = app_handle.emit(&output_event, encoded);
                                 pending.drain(..safe);
@@ -474,6 +551,13 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                                     "pty pending buffer overflowed boundary protection: id={}, len={}",
                                     session_id_owned, pending.len()
                                 );
+                                if vt_diag_enabled {
+                                    scan_vt_scroll_sequences(
+                                        &pending,
+                                        &mut vt_diag,
+                                        &session_id_owned,
+                                    );
+                                }
                                 let encoded = STANDARD.encode(&pending);
                                 let _ = app_handle.emit(&output_event, encoded);
                                 pending.clear();
@@ -488,6 +572,9 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             }
             // 进程退出，把剩余数据全部发出去（不再保护边界，最后一帧）
             if !pending.is_empty() {
+                if vt_diag_enabled {
+                    scan_vt_scroll_sequences(&pending, &mut vt_diag, &session_id_owned);
+                }
                 let encoded = STANDARD.encode(&pending);
                 let _ = app_handle.emit(&output_event, encoded);
                 pending.clear();
@@ -543,6 +630,18 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 diagnostics.last_resize_rows,
                 child_wait_error
             );
+            if vt_diag_enabled {
+                debug!(
+                    "pty vt-diag summary: id={}, alt_enter={}, alt_exit={}, ed2={}, ed3={}, decstbm={}, ri={}",
+                    session_id_owned,
+                    vt_diag.alt_enter,
+                    vt_diag.alt_exit,
+                    vt_diag.ed2,
+                    vt_diag.ed3,
+                    vt_diag.decstbm,
+                    vt_diag.ri
+                );
+            }
 
             if let Ok(mut statuses) = status_map.lock() {
                 if let Some(entry) = statuses.get_mut(&session_id_owned) {
@@ -714,5 +813,39 @@ mod tests {
         vars.insert("WSLENV".to_string(), "CLI_MANAGER_TAB_ID".to_string());
         PtyManager::apply_wsl_env_forwarding(&mut vars);
         assert_eq!(vars.get("WSLENV").unwrap(), "CLI_MANAGER_TAB_ID");
+    }
+
+    #[test]
+    fn vt_diag_counts_scroll_related_sequences() {
+        let mut diag = VtScrollDiag::default();
+        let data = b"\x1b[?1049hhello\x1b[2J\x1b[3J\x1b[1;24r\x1bMworld\x1b[2J\x1b[?1049l";
+        scan_vt_scroll_sequences(data, &mut diag, "test");
+        assert_eq!(diag.alt_enter, 1);
+        assert_eq!(diag.alt_exit, 1);
+        assert_eq!(diag.ed2, 2);
+        assert_eq!(diag.ed3, 1);
+        assert_eq!(diag.decstbm, 1);
+        assert_eq!(diag.ri, 1);
+    }
+
+    #[test]
+    fn vt_diag_ignores_unrelated_sequences() {
+        let mut diag = VtScrollDiag::default();
+        // 光标隐藏、SGR、ED0、DEC 私有模式 restore（? 前缀的 r）、DECSCUSR 都不应计入
+        let data = b"\x1b[?25l\x1b[0m\x1b[J\x1b[?1000r\x1b[2 qplain text";
+        scan_vt_scroll_sequences(data, &mut diag, "test");
+        assert_eq!(diag.alt_enter, 0);
+        assert_eq!(diag.alt_exit, 0);
+        assert_eq!(diag.ed2, 0);
+        assert_eq!(diag.ed3, 0);
+        assert_eq!(diag.decstbm, 0);
+        assert_eq!(diag.ri, 0);
+    }
+
+    #[test]
+    fn vt_diag_counts_full_screen_decstbm_reset() {
+        let mut diag = VtScrollDiag::default();
+        scan_vt_scroll_sequences(b"\x1b[r", &mut diag, "test");
+        assert_eq!(diag.decstbm, 1);
     }
 }

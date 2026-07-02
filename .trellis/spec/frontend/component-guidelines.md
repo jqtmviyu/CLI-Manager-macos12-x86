@@ -928,6 +928,31 @@ text = text.replace(/\x1b\[[23]J/g, "");
 - [ ] Scope clear-screen filtering to the "user is reading history" case; do not degrade normal at-bottom TUI redraw fidelity.
 - [ ] If resize is noisy during TUI streaming, prefer deferring `fit()` rather than rebuilding the terminal or forcing outer-container scroll resets.
 
+### Common Mistake: Misdiagnosing Claude Code scrollback duplication as a CLI-Manager rendering bug
+
+**Symptom**: While Claude Code streams output the live view looks correct, but scrolling up later reveals duplicated blocks in scrollback. The duplicate sits at a frame boundary: the tail rows of the previous frame (e.g. diff lines `147-149`) followed by the new frame reprinting from the same rows. Duplicates are stable (selectable, survive redraws), so they are real buffer content — not a WebGL/canvas artifact.
+
+**Cause** (investigated 2026-07-02): Upstream Claude Code bug, not ours. Its default inline (Ink) renderer leaves the old frame in scrollback and reprints a near-identical frame on relayout triggers (content crossing the viewport edge, spinner updates, SIGWINCH, Ctrl+O). Tracked upstream in anthropics/claude-code #53857, #46834, #52924, #52945, #51828 — reproduced on iTerm2, Terminal.app, VS Code, Windows Terminal across macOS/Linux/Windows, so the emulator is not the culprit. Our `scrollOnEraseInDisplay: true` amplifies the ED2-clear flavor of this (iTerm2-style "push erased screen into scrollback"), which is why duplicates can look worse here than in spec-conform terminals.
+
+**Fix**: Do not change CLI-Manager. Mitigate on the Claude Code side: set `"env": {"CLAUDE_CODE_NO_FLICKER": "1"}` in `~/.claude/settings.json` (more reliable on Windows than the `"tui": "fullscreen"` settings key), or run `/tui fullscreen` in-session. Both switch to alt-screen rendering, which never touches scrollback (at the cost of the native scrollbar).
+
+**Wrong**:
+
+```tsx
+// Do not remove this option to "fix" the duplication.
+const terminal = new Terminal({
+  // scrollOnEraseInDisplay: true,  <- removed
+});
+```
+
+Removing `scrollOnEraseInDisplay: true` is a worse regression: Codex repaints via explicit ED2+ED3, so without it Codex scrollback never grows at all (xtermjs/xterm.js#5745), and PowerShell/ConPTY loses history on clear — the exact problems commit `d15495d` (2026-06-08) introduced the option to solve.
+
+**Prevention**:
+
+- [ ] First classify: buffer-level duplication (stable when scrolled, selectable) vs. rendering artifact (vanishes on redraw). Frame-boundary duplicates during Claude Code sessions point upstream — do not start by auditing our renderer or PTY path.
+- [ ] Cross-check in Windows Terminal with the same CLI before blaming the embedded xterm.
+- [ ] Treat `scrollOnEraseInDisplay: true` + `windowsPty: { backend: "conpty" }` as a coupled pair with the trade-off documented above; any change must re-verify Codex scrollback growth and PowerShell `cls` history.
+
 ### Convention: Light-theme hierarchy relies on contrast plus borders, not tint alone
 
 **What**: When polishing existing light-theme UI surfaces, selected and active states must combine three signals: darker text or icon contrast, a stronger edge (`border` or inset outline), and a surface step that is visibly different from hover. Do not rely on a near-white tint change alone.
