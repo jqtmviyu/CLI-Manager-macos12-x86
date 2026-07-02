@@ -1,18 +1,22 @@
-use log::{error, info, warn};
+use log::{error, info};
+#[cfg(target_os = "windows")]
 use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
 use crate::shell_resolver::{resolve_git_bash_exe, GIT_BASH_NOT_FOUND_MESSAGE};
 
 #[derive(serde::Deserialize)]
 pub struct ExternalTab {
     pub cwd: Option<String>,
+    #[cfg(target_os = "windows")]
     pub title: String,
     pub startup_cmd: Option<String>,
     pub shell: Option<String>,
 }
 
+#[cfg(target_os = "windows")]
 fn shell_exe(shell: &str) -> Result<(String, Option<&'static str>), String> {
     match shell {
         // Windows shells
@@ -40,6 +44,7 @@ fn trimmed_startup_cmd(tab: &ExternalTab) -> Option<&str> {
         .filter(|cmd| !cmd.is_empty())
 }
 
+#[cfg(target_os = "windows")]
 fn push_tab_args(args: &mut Vec<String>, tab: &ExternalTab) -> Result<(), String> {
     args.push("new-tab".into());
     if let Some(cwd) = &tab.cwd {
@@ -120,6 +125,7 @@ fn escape_applescript_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+#[cfg(target_os = "windows")]
 fn windows_terminal_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from("wt"), PathBuf::from("wt.exe")];
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
@@ -133,6 +139,7 @@ fn windows_terminal_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+#[cfg(target_os = "windows")]
 fn spawn_windows_terminal(args: &[String]) -> Result<PathBuf, std::io::Error> {
     let candidates = windows_terminal_candidates();
     let mut last_err: Option<std::io::Error> = None;
@@ -141,7 +148,7 @@ fn spawn_windows_terminal(args: &[String]) -> Result<PathBuf, std::io::Error> {
         match Command::new(&candidate).args(args).spawn() {
             Ok(_) => return Ok(candidate),
             Err(err) => {
-                warn!("Failed to spawn {:?}: {}", candidate, err);
+                log::warn!("Failed to spawn {:?}: {}", candidate, err);
                 last_err = Some(err);
             }
         }
@@ -262,7 +269,7 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
                     break;
                 }
                 Err(err) => {
-                    warn!("Failed to spawn {}: {}", program, err);
+                    log::warn!("Failed to spawn {}: {}", program, err);
                     last_err = Some(err);
                 }
             }

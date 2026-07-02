@@ -795,14 +795,15 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             let reader_handle = {
                 let mut session = session_arc.lock().unwrap();
                 let mut child = session.child.lock().unwrap();
-                let pid = child.process_id();
                 #[cfg(target_os = "windows")]
-                if let Some(pid) = pid {
-                    if let Err(err) = Self::kill_process_tree(pid) {
-                        warn!(
-                            "pty process tree kill failed, fallback to child kill: id={}, pid={}, error={}",
-                            session_id, pid, err
-                        );
+                {
+                    if let Some(pid) = child.process_id() {
+                        if let Err(err) = Self::kill_process_tree(pid) {
+                            warn!(
+                                "pty process tree kill failed, fallback to child kill: id={}, pid={}, error={}",
+                                session_id, pid, err
+                            );
+                        }
                     }
                 }
                 let _ = child.kill();
