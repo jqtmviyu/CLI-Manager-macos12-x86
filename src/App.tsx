@@ -36,6 +36,7 @@ import { createPerfMarker, logWarn } from "./lib/logger";
 import { getContrastRatioFromHex, MIN_APPLY_CONTRAST_RATIO } from "./lib/contrast";
 import { translateCurrent, useI18n } from "./lib/i18n";
 import { getOsPlatform } from "./lib/shell";
+import { normalizeFontFamilyStack } from "./lib/systemFonts";
 import { resolveProjectForSession } from "./lib/terminalProject";
 import "./App.css";
 
@@ -341,7 +342,7 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
           action: openSettings
             ? {
                 label: translateCurrent("notifications.update.viewUpdate"),
-                onClick: () => openSettings("general"),
+                onClick: () => openSettings("about"),
               }
             : undefined,
           duration: 12000,
@@ -652,10 +653,11 @@ function App() {
   }, [darkThemePalette, lightThemePalette, resolvedTheme, uiTextColor]);
 
   useEffect(() => {
+    const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
     if (uiFontFamily) {
-      document.documentElement.style.setProperty("--font-ui-sans", uiFontFamily);
-      document.documentElement.style.setProperty("--font-ui-mono", uiFontFamily);
-      document.documentElement.style.fontFamily = uiFontFamily;
+      document.documentElement.style.setProperty("--font-ui-sans", effectiveUiFontFamily);
+      document.documentElement.style.setProperty("--font-ui-mono", effectiveUiFontFamily);
+      document.documentElement.style.fontFamily = effectiveUiFontFamily;
     } else {
       document.documentElement.style.removeProperty("--font-ui-sans");
       document.documentElement.style.removeProperty("--font-ui-mono");
@@ -674,7 +676,7 @@ function App() {
         html, body, #root, button, input, select, textarea, optgroup,
         [class*="font-sans"], [class*="font-mono"], code, pre, kbd, samp,
         .ui-mono, .ui-dev-label {
-          font-family: ${uiFontFamily} !important;
+          font-family: ${effectiveUiFontFamily} !important;
         }
         .xterm, .xterm *, .xterm-helper-textarea {
           font-family: var(--terminal-font-family, "Cascadia Code", Consolas, monospace) !important;

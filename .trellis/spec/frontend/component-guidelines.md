@@ -46,6 +46,34 @@ const { t } = useI18n();
 
 **Tests**: Run `npx tsc --noEmit` and `npm run build`; manually verify Settings > General language switching changes the touched UI and persists after restart. Smoke-test hover cards/tooltips, right-side action buttons, session history, stats panels, toast/system notifications, and hook notifications when those areas are touched.
 
+### Convention: Persisted font family values must be CSS-serialized before applying
+
+**What**: Any UI or terminal font family value loaded from settings or system font discovery must be normalized through `normalizeFontFamilyStack` or `normalizeTerminalFontFamily` before it is written into inline styles, CSS variables, generated `<style>` text, Mantine theme config, or xterm options.
+
+**Why**: System font names can contain spaces, commas, CJK characters, punctuation, or other characters that need CSS string serialization. If a raw persisted value or raw system-font option is injected directly, CSS can parse it differently from the intended family and some settings surfaces can keep rendering with the fallback font. For terminal fonts, generic fallbacks such as `monospace` must stay after the selected concrete family; otherwise xterm resolves the generic font first and the user's selected system/custom terminal font never appears.
+
+**Correct**:
+
+```tsx
+const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
+
+document.documentElement.style.setProperty("--font-ui-sans", effectiveUiFontFamily);
+styleEl.textContent = `button { font-family: ${effectiveUiFontFamily} !important; }`;
+
+const effectiveTerminalFontFamily = normalizeTerminalFontFamily(fontFamily);
+terminal.options.fontFamily = effectiveTerminalFontFamily;
+```
+
+**Wrong**:
+
+```tsx
+document.documentElement.style.setProperty("--font-ui-sans", uiFontFamily);
+styleEl.textContent = `button { font-family: ${uiFontFamily} !important; }`;
+terminal.options.fontFamily = fontFamily;
+```
+
+**Tests**: Run `npx tsc --noEmit`; manually select installed system/custom fonts with different name shapes, such as a space-containing font, a CJK-named font, a comma-containing font, and a punctuation-containing font when available. In Settings > General and Settings > Terminal, verify the settings navigation/content and a newly focused terminal use the selected font, and the terminal select does not show the current-custom fallback label for available system fonts.
+
 ### Convention: Auxiliary panels do not hijack primary sidebar navigation
 
 **What**: Terminal-side auxiliary panels, such as realtime stats, Git changes, and project files, must not force the primary left sidebar into a different navigation mode. If an auxiliary panel needs to load shared data, keep the left sidebar display mode behind explicit local UI state or a dedicated left-sidebar action.

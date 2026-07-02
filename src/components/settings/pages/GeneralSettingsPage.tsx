@@ -35,6 +35,7 @@ import {
 import {
   listSystemFonts,
   mergeFontFamilyOptions,
+  normalizeFontFamilyStack,
   type SystemFontFamily,
 } from "../../../lib/systemFonts";
 import { resolveCcusageWslTarget, useCcusageStore } from "../../../stores/ccusageStore";
@@ -419,6 +420,7 @@ export function GeneralSettingsPage() {
   const ccusageCheckingStatus = useCcusageStore((s) => s.checkingStatus);
   const ccusageError = useCcusageStore((s) => s.error);
   const checkCcusageStatus = useCcusageStore((s) => s.checkStatus);
+  const normalizedUiFontFamily = normalizeFontFamilyStack(uiFontFamily, UI_FONT_FALLBACK);
   const [uiFontSizeDraft, setUiFontSizeDraft] = useState(uiFontSize);
   const [uiTextColorDraft, setUiTextColorDraft] = useState(uiTextColor);
   const [systemFonts, setSystemFonts] = useState<SystemFontFamily[]>([]);
@@ -562,7 +564,7 @@ export function GeneralSettingsPage() {
   const uiFontFamilyOptions = useMemo(
     () =>
       mergeFontFamilyOptions(
-        uiFontFamily,
+        normalizedUiFontFamily,
         UI_FONT_FAMILY_OPTIONS.map((option) => ({
           value: option.value,
           label: option.labelKey ? t(option.labelKey) : option.label,
@@ -570,7 +572,7 @@ export function GeneralSettingsPage() {
         systemFonts,
         UI_FONT_FALLBACK
       ),
-    [systemFonts, t, uiFontFamily]
+    [systemFonts, t, normalizedUiFontFamily]
   );
   const showLightPalettes = theme === "light" || theme === "system";
   const showDarkPalettes = theme === "dark" || theme === "system";
@@ -653,9 +655,9 @@ export function GeneralSettingsPage() {
 
             <FontFamilySelect
               label={t("settings.general.uiFont")}
-              value={uiFontFamily}
+              value={normalizedUiFontFamily}
               onChange={(value) => {
-                if (value) void update("uiFontFamily", value);
+                if (value) void update("uiFontFamily", normalizeFontFamilyStack(value, UI_FONT_FALLBACK));
               }}
               data={uiFontFamilyOptions}
               maxDropdownHeight={320}

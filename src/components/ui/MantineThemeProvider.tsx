@@ -5,6 +5,7 @@ import {
   type DarkThemePalette,
   type LightThemePalette,
 } from "../../stores/settingsStore";
+import { normalizeFontFamilyStack } from "../../lib/systemFonts";
 
 const LIGHT_PRIMARY_COLORS: Record<LightThemePalette, string> = {
   "warm-paper": "#c46a2d",
@@ -65,6 +66,7 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
+  const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
   const primaryColor =
     resolvedTheme === "dark" ? DARK_PRIMARY_COLORS[darkThemePalette] : LIGHT_PRIMARY_COLORS[lightThemePalette];
 
@@ -76,8 +78,8 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
       },
       primaryColor: "cliPrimary",
       primaryShade: 6,
-      fontFamily: uiFontFamily,
-      fontFamilyMonospace: uiFontFamily,
+      fontFamily: effectiveUiFontFamily,
+      fontFamilyMonospace: effectiveUiFontFamily,
       fontSizes: {
         xs: `${metaSize}px`,
         sm: `${uiFontSize + 1}px`,
@@ -86,11 +88,11 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
         xl: `${uiFontSize + 7}px`,
       },
       headings: {
-        fontFamily: uiFontFamily,
+        fontFamily: effectiveUiFontFamily,
       },
       defaultRadius: "md",
     });
-  }, [primaryColor, uiFontFamily, uiFontSize]);
+  }, [effectiveUiFontFamily, primaryColor, uiFontSize]);
 
   return (
     <MantineProvider theme={mantineTheme} defaultColorScheme={resolvedTheme} forceColorScheme={resolvedTheme}>

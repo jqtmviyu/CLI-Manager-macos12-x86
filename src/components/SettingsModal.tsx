@@ -15,6 +15,7 @@ import { ModelPricingSettingsPage } from "./settings/pages/ModelPricingSettingsP
 import { AboutSettingsPage } from "./settings/pages/AboutSettingsPage";
 import { useSettingsStore } from "../stores/settingsStore";
 import { useI18n, type TranslationKey } from "../lib/i18n";
+import { normalizeFontFamilyStack } from "../lib/systemFonts";
 
 export type SettingsTab =
   | "general"
@@ -125,6 +126,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const wasOpenRef = useRef(open);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
+  const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
   const { t } = useI18n();
   useFocusTrap(dialogRef, mounted && !closing);
 
@@ -194,7 +196,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
         className={`fixed inset-x-0 bottom-0 ${isLikelyMacOs() ? "top-0" : "top-[26px]"} z-50 ${
           closing ? "animate-fade-out" : "animate-fade-in"
         }`}
-        style={{ fontFamily: uiFontFamily }}
+        style={{ fontFamily: effectiveUiFontFamily }}
         onClick={() => requestClose("backdrop")}
       >
         <div

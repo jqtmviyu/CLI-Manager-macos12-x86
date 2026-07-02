@@ -33,14 +33,97 @@ export function toCssFontFamilyName(family: string) {
   const trimmed = family.trim();
   if (!trimmed) return "";
   if (CSS_GENERIC_FAMILIES.has(trimmed.toLowerCase())) return trimmed;
+  if (/^var\(.+\)$/.test(trimmed)) return trimmed;
   if (/^".*"$|^'.*'$/.test(trimmed)) return trimmed;
-  if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(trimmed)) return trimmed;
+  if (/^-?[a-zA-Z_][a-zA-Z0-9_-]*$/.test(trimmed)) return trimmed;
   return JSON.stringify(trimmed);
 }
 
+function splitFontFamilyStack(stack: string) {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "\"" | "'" | null = null;
+  let escaped = false;
+  let parenDepth = 0;
+
+  for (const char of stack) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === "\"" || char === "'") {
+      quote = char;
+      current += char;
+      continue;
+    }
+
+    if (char === "(") {
+      parenDepth += 1;
+      current += char;
+      continue;
+    }
+
+    if (char === ")") {
+      parenDepth = Math.max(0, parenDepth - 1);
+      current += char;
+      continue;
+    }
+
+    if (char === "," && parenDepth === 0) {
+      const token = current.trim();
+      if (token) tokens.push(token);
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  const token = current.trim();
+  if (token) tokens.push(token);
+  return tokens;
+}
+
+function normalizeFontFamilyKey(fontFamily: string) {
+  return splitFontFamilyStack(fontFamily)
+    .map((token) => toCssFontFamilyName(token).trim().replace(/^['"]|['"]$/g, "").toLowerCase())
+    .filter(Boolean)
+    .join(",");
+}
+
 export function withFontFallback(family: string, fallback: string) {
-  const cssFamily = toCssFontFamilyName(family);
-  return cssFamily ? `${cssFamily}, ${fallback}` : fallback;
+  return normalizeFontFamilyStack(family, fallback);
+}
+
+export function normalizeFontFamilyStack(fontFamily: string, fallback = "") {
+  const seen = new Set<string>();
+  const tokens = [fontFamily, fallback]
+    .flatMap(splitFontFamilyStack)
+    .map(toCssFontFamilyName)
+    .filter(Boolean);
+
+  return tokens
+    .filter((token) => {
+      const normalized = normalizeFontFamilyKey(token);
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    })
+    .join(", ");
 }
 
 export function mergeFontFamilyOptions(
@@ -51,23 +134,31 @@ export function mergeFontFamilyOptions(
 ): FontFamilyOption[] {
   const options: FontFamilyOption[] = [];
   const seen = new Set<string>();
+  const normalizedCurrentValue = normalizeFontFamilyStack(currentValue);
+  const builtinFontOptions = builtinOptions.map((option) => ({
+    ...option,
+    value: normalizeFontFamilyStack(option.value),
+  }));
   const systemOptions = systemFonts
     .map((font) => font.family.trim())
     .filter(Boolean)
     .map((family) => ({ value: withFontFallback(family, fallback), label: family }));
-  const availableValues = new Set([...builtinOptions, ...systemOptions].map((option) => option.value));
+  const availableValues = new Set(
+    [...builtinFontOptions, ...systemOptions].map((option) => normalizeFontFamilyKey(option.value))
+  );
 
   const add = (option: FontFamilyOption) => {
-    if (!option.value || seen.has(option.value)) return;
-    seen.add(option.value);
+    const optionKey = normalizeFontFamilyKey(option.value);
+    if (!option.value || seen.has(optionKey)) return;
+    seen.add(optionKey);
     options.push(option);
   };
 
-  if (currentValue && !availableValues.has(currentValue)) {
-    add({ value: currentValue, label: "当前自定义（保留）" });
+  if (normalizedCurrentValue && !availableValues.has(normalizeFontFamilyKey(normalizedCurrentValue))) {
+    add({ value: normalizedCurrentValue, label: "当前自定义（保留）" });
   }
 
-  builtinOptions.forEach(add);
+  builtinFontOptions.forEach(add);
   systemOptions.forEach(add);
 
   return options;
