@@ -116,6 +116,16 @@ pub struct PtyManager {
     statuses: Arc<Mutex<HashMap<String, PtyProcessStatus>>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellLaunchLogContext {
+    requested_shell: Option<String>,
+    shell_key: String,
+    exe: String,
+    args: Vec<String>,
+    login_shell: bool,
+    cwd: Option<String>,
+}
+
 impl PtyManager {
     pub fn new() -> Self {
         Self {
@@ -158,7 +168,7 @@ impl PtyManager {
                 })
                 .ok_or_else(|| GIT_BASH_NOT_FOUND_MESSAGE.to_string()),
             // Unix shells (macOS, Linux)
-            "zsh" => Ok(("zsh".to_string(), Vec::new())),
+            "zsh" => Ok(("zsh".to_string(), Self::zsh_login_args())),
             "fish" => Ok(("fish".to_string(), Vec::new())),
             "sh" => Ok(("sh".to_string(), Vec::new())),
             "bash" => {
@@ -166,7 +176,7 @@ impl PtyManager {
                 if cfg!(target_os = "windows") {
                     Ok(("bash.exe".to_string(), Vec::new()))
                 } else {
-                    Ok(("bash".to_string(), Vec::new()))
+                    Ok(("bash".to_string(), Self::bash_login_args()))
                 }
             }
             // 默认：Windows 用 powershell；Unix 用用户的登录 shell（$SHELL），
@@ -196,6 +206,43 @@ impl PtyManager {
 
     fn git_bash_login_args() -> Vec<String> {
         vec!["--login".to_string(), "-i".to_string()]
+    }
+
+    fn zsh_login_args() -> Vec<String> {
+        if cfg!(target_os = "macos") {
+            vec!["-l".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn bash_login_args() -> Vec<String> {
+        if cfg!(target_os = "macos") {
+            vec!["--login".to_string(), "-i".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn shell_args_include_login(args: &[String]) -> bool {
+        args.iter().any(|arg| arg == "-l" || arg == "--login")
+    }
+
+    fn build_shell_launch_log_context(
+        requested_shell: Option<&str>,
+        shell_key: &str,
+        exe: &str,
+        args: &[String],
+        cwd: Option<&str>,
+    ) -> ShellLaunchLogContext {
+        ShellLaunchLogContext {
+            requested_shell: requested_shell.map(str::to_string),
+            shell_key: shell_key.to_string(),
+            exe: exe.to_string(),
+            args: args.to_vec(),
+            login_shell: Self::shell_args_include_login(args),
+            cwd: cwd.map(str::to_string),
+        }
     }
 
     /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
@@ -452,6 +499,18 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             );
             e
         })?;
+        let launch_context =
+            Self::build_shell_launch_log_context(shell, shell_key, &exe, &args, cwd);
+        debug!(
+            "pty shell launch: id={}, requested_shell={:?}, shell_key={}, exe={}, args={:?}, login_shell={}, cwd={:?}",
+            session_id,
+            launch_context.requested_shell,
+            launch_context.shell_key,
+            launch_context.exe,
+            launch_context.args,
+            launch_context.login_shell,
+            launch_context.cwd
+        );
         let mut cmd = CommandBuilder::new(&exe);
         for arg in args {
             cmd.arg(arg);
@@ -778,6 +837,45 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn build_shell_args_starts_zsh_as_login_shell_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
+
+        assert_eq!(exe, "zsh");
+        assert_eq!(args, vec!["-l".to_string()]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn build_shell_args_starts_bash_as_login_shell_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("bash", None).unwrap();
+
+        assert_eq!(exe, "bash");
+        assert_eq!(args, vec!["--login".to_string(), "-i".to_string()]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn build_shell_launch_log_context_marks_login_shell_details_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
+
+        let context = PtyManager::build_shell_launch_log_context(
+            Some("zsh"),
+            "zsh",
+            &exe,
+            &args,
+            Some("/tmp/project"),
+        );
+
+        assert_eq!(context.requested_shell, Some("zsh".to_string()));
+        assert_eq!(context.shell_key, "zsh");
+        assert_eq!(context.exe, "zsh");
+        assert_eq!(context.args, vec!["-l".to_string()]);
+        assert!(context.login_shell);
+        assert_eq!(context.cwd, Some("/tmp/project".to_string()));
+    }
 
     #[test]
     fn wsl_env_forwarding_adds_callback_vars_and_keeps_existing() {

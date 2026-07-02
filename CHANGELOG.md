@@ -13,6 +13,11 @@
 - **PTY 滚动相关 VT 序列诊断**：调试模式下 PTY 输出会统计影响滚动条的关键控制序列（alt-screen 进出 `?1049h/l`、清屏 `2J`、清回滚 `3J`、滚动区域 DECSTBM、RI），首次出现即记 debug 日志，会话结束输出汇总；用于对比不同机器上 Codex 滚动条有无差异的字节流证据，正常模式零开销。
 - **OOM 诊断日志**：为 AI Replay 快照、历史详情/统计和子 Agent transcript 链路补充 WebView 控制台与后端日志，输出事件数、payload/patch 字节数、历史消息大小和耗时等指标，方便排查 V1.2.3 后的内存峰值问题。
 - **OOM 风险缓解**：为活动终端写入队列、子 Agent transcript、Replay 事件内存缓存和 Replay Git 快照增加硬上限；高吞吐输出或超大 diff 场景下优先保留最新内容并丢弃旧积压，避免少量窗口也能把 WebView 内存打满。
+- **PTY 启动日志增强**：后端新增 `pty shell launch` debug 诊断日志，输出请求的 shell、最终 `shell_key`、可执行文件、启动参数、是否以 login shell 启动和工作目录，便于继续定位不同机器上内置终端环境差异。
+
+### 终端与 macOS 兼容性
+
+- **macOS 内置终端恢复 login shell 环境**：内置 PTY 在 macOS 上启动 `zsh` 时会显式追加 `-l`，启动 `bash` 时会显式追加 `--login -i`，使 `~/.zprofile`、`~/.bash_profile` 等登录环境配置重新生效，修复部分机器中内置终端缺少 PATH / 环境变量的问题。[#74](https://github.com/dark-hxx/CLI-Manager/issues/74)
 
 ## [V1.2.4] - 2026-07-01
 ### 界面优化
