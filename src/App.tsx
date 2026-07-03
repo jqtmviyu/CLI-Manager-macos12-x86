@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Sidebar } from "./components/sidebar";
 import { TerminalTabs } from "./components/TerminalTabs";
 import { CommandPalette } from "./components/CommandPalette";
+import type { LucideIcon } from "lucide-react";
 import type { SettingsTab } from "./components/SettingsModal";
 const SettingsModal = lazy(() =>
   import("./components/SettingsModal").then((module) => ({ default: module.SettingsModal }))
@@ -21,7 +22,7 @@ const CcusageStatsPanel = lazy(() =>
 );
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "./components/CloseConfirmDialog";
-import { AlertTriangle, Check, X } from "./components/icons";
+import { CircleAlert, CircleCheck, Info, ShieldAlert, X } from "./components/icons";
 import { useSettingsStore, type HookEventType } from "./stores/settingsStore";
 import { useProjectStore } from "./stores/projectStore";
 import { useSessionStore } from "./stores/sessionStore";
@@ -99,7 +100,7 @@ type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
 
 interface ClaudeHookToastStyle {
   variant: ClaudeHookToastVariant;
-  icon: typeof AlertTriangle;
+  icon: LucideIcon;
   eyebrow: string;
   actionLabel: string;
 }
@@ -124,15 +125,15 @@ function createClaudeHookToastId(tabId: string): string {
 
 function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle {
   if (payload.event === "Stop") {
-    return { variant: "finished", icon: Check, eyebrow: translateCurrent("notifications.hookToast.finished"), actionLabel: translateCurrent("notifications.hookToast.view") };
+    return { variant: "finished", icon: CircleCheck, eyebrow: translateCurrent("notifications.hookToast.finished"), actionLabel: translateCurrent("notifications.hookToast.view") };
   }
   if (payload.event === "StopFailure") {
-    return { variant: "failed", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.failed"), actionLabel: translateCurrent("notifications.hookToast.view") };
+    return { variant: "failed", icon: CircleAlert, eyebrow: translateCurrent("notifications.hookToast.failed"), actionLabel: translateCurrent("notifications.hookToast.view") };
   }
   if (payload.event === "PermissionRequest") {
-    return { variant: "approval", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.approval"), actionLabel: translateCurrent("notifications.hookToast.handle") };
+    return { variant: "approval", icon: ShieldAlert, eyebrow: translateCurrent("notifications.hookToast.approval"), actionLabel: translateCurrent("notifications.hookToast.handle") };
   }
-  return { variant: "attention", icon: AlertTriangle, eyebrow: translateCurrent("notifications.hookToast.attention"), actionLabel: translateCurrent("notifications.hookToast.view") };
+  return { variant: "attention", icon: Info, eyebrow: translateCurrent("notifications.hookToast.attention"), actionLabel: translateCurrent("notifications.hookToast.view") };
 }
 
 function getCliHookSourceName(payload: CliHookPayload): string {
@@ -269,28 +270,22 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string, onActivateT
           <Icon size={16} strokeWidth={2.4} />
         </div>
         <div className="claude-hook-toast__content">
-          <div className="claude-hook-toast__eyebrow">{item.style.eyebrow}</div>
-          <div className="claude-hook-toast__title">{item.title}</div>
+          <div className="claude-hook-toast__title">{item.style.eyebrow}</div>
           <div className="claude-hook-toast__source" title={item.tabTitle}>
-            {translateCurrent("notifications.hookToast.from", { tabTitle: item.tabTitle })}
+            {item.title} · {translateCurrent("notifications.hookToast.from", { tabTitle: item.tabTitle })}
           </div>
           {item.message ? <div className="claude-hook-toast__description">{item.message}</div> : null}
-          <div className="claude-hook-toast__actions">
-            <button
-              type="button"
-              className="claude-hook-toast__action"
-              onClick={() => {
-                void onActivateTarget(tabId);
-                toast.dismiss(item.id);
-              }}
-            >
-              {item.style.actionLabel}
-            </button>
-            <button type="button" className="claude-hook-toast__ignore" onClick={() => toast.dismiss(item.id)}>
-              {translateCurrent("notifications.hookToast.ignore")}
-            </button>
-          </div>
         </div>
+        <button
+          type="button"
+          className="claude-hook-toast__action"
+          onClick={() => {
+            void onActivateTarget(tabId);
+            toast.dismiss(item.id);
+          }}
+        >
+          {item.style.actionLabel}
+        </button>
         <button
           type="button"
           className="claude-hook-toast__close"
@@ -304,7 +299,7 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string, onActivateT
     {
       id: item.id,
       duration: settings.hookPopupAutoCloseEnabled ? settings.hookPopupAutoCloseSeconds * 1000 : Infinity,
-      position: "top-right",
+      position: "bottom-right",
     }
   );
 }
@@ -571,8 +566,14 @@ function App() {
       const tabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
       const terminalStore = useTerminalStore.getState();
       const tabTitle = tabId ? terminalStore.sessions.find((session) => session.id === tabId)?.title ?? null : null;
-      // SessionStart 仅用于绑定 sessionId（无需用户介入），与 UserPromptSubmit 一样不弹 toast
-      if (tabId && event.payload.event !== "UserPromptSubmit" && event.payload.event !== "SessionStart") {
+      // SessionStart/UserPromptSubmit 只更新状态；普通工具生命周期事件不打扰用户。
+      if (
+        tabId &&
+        event.payload.event !== "UserPromptSubmit" &&
+        event.payload.event !== "SessionStart" &&
+        event.payload.event !== "ToolStart" &&
+        event.payload.event !== "ToolStop"
+      ) {
         showClaudeHookToast(event.payload, tabId, handleActivateHookNotificationTarget);
       }
       // 系统通知：并行发送（不影响应用内通知）
