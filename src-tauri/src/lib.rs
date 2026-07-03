@@ -407,6 +407,7 @@ pub fn run() {
             commands::ccswitch::ccswitch_reset_project_provider,
             commands::ccswitch::ccswitch_prepare_claude_provider,
             commands::ccswitch::ccswitch_prepare_codex_provider,
+            commands::ccswitch::ccswitch_test_provider_model,
             commands::ccswitch::ccswitch_cleanup_codex_profiles,
             commands::ccswitch::ccswitch_probe_projects,
             commands::ccswitch::ccswitch_list_common_configs,
