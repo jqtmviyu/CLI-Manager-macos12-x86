@@ -7,24 +7,15 @@ on:
       - "V*"
 
 jobs:
-  build:
+  build-macos-intel:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest
-            args: ""
-            rust-target: ""
-          - platform: macos-14
-            args: "--target aarch64-apple-darwin"
-            rust-target: aarch64-apple-darwin
-          - platform: ubuntu-22.04
-            args: ""
-            rust-target: ""
-
-    runs-on: ${{ matrix.platform }}
+    runs-on: macos-15-intel
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      CFLAGS: "-mmacosx-version-min=12.0"
+      CXXFLAGS: "-mmacosx-version-min=12.0"
+      RUSTFLAGS: "-C link-arg=-mmacosx-version-min=12.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -37,13 +28,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.rust-target }}
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          targets: x86_64-apple-darwin
 
       - name: Install dependencies
         run: npm ci
@@ -71,8 +56,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # 提高前端构建（tsc && vite build）的 Node 堆上限，避免 macOS runner 上 OOM（退出码 134/SIGABRT）
           NODE_OPTIONS: "--max-old-space-size=4096"
         with:
@@ -83,11 +66,8 @@ jobs:
 
             | 平台 | 格式 |
             |------|------|
-            | Windows | `.msi` 安装包 |
-            | macOS (Apple Silicon) | `.dmg` 磁盘映像 |
-            | Linux | `.deb` / `.AppImage` |
+            | macOS 12+ (Intel x86_64) | `.dmg` 磁盘映像 |
 
-            > - Windows 首次安装可能触发 SmartScreen 提示，点击"仍要运行"继续
             > - macOS 应用未经 Apple 签名/公证，首次打开可能提示"已损坏"或"无法验证开发者"
 
             ### macOS 安装说明
@@ -106,5 +86,5 @@ jobs:
             ${{ steps.changelog.outputs.content }}
           releaseDraft: false
           prerelease: false
-          includeUpdaterJson: true
-          args: ${{ matrix.args }}
+          includeUpdaterJson: false
+          args: --target x86_64-apple-darwin

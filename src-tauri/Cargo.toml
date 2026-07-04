@@ -40,7 +40,6 @@ sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 memchr = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = { version = "2.4.2", features = ["semver"] }
 # 只读解析 cc-switch.db；复用 tauri-plugin-sql 依赖树中既有的 sqlx/libsqlite3-sys，无新增原生依赖

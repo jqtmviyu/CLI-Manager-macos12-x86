@@ -29,7 +29,6 @@ import { useSessionStore } from "./stores/sessionStore";
 import { useSyncStore } from "./stores/syncStore";
 import { useHistoryStore } from "./stores/historyStore";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { useUpdateStore } from "./stores/updateStore";
 import { useReplayStore } from "./stores/replayStore";
 import { useTerminalStore, type CliHookPayload } from "./stores/terminalStore";
 import { useModelPricingStore } from "./stores/modelPricingStore";
@@ -50,7 +49,6 @@ let firstScreenPerfReported = false;
 let firstScreenShown = false;
 let startupBaseReady = false;
 let deferredStartupTasksStarted = false;
-let startupUpdateChecked = false;
 const COMPACT_WINDOW_WIDTH = 350;
 const WINDOW_MIN_HEIGHT = 600;
 const IN_TAURI = isTauri();
@@ -304,7 +302,7 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string, onActivateT
   );
 }
 
-function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): void {
+function runDeferredStartupTasks(): void {
   if (!startupBaseReady || !firstScreenPerfReported || deferredStartupTasksStarted) return;
   deferredStartupTasksStarted = true;
 
@@ -326,25 +324,6 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
       }
     })();
 
-    if (!startupUpdateChecked) {
-      startupUpdateChecked = true;
-      void (async () => {
-        const updateStore = useUpdateStore.getState();
-        await updateStore.fetchVersion();
-        const updateInfo = await updateStore.checkUpdate({ silent: true });
-        if (!updateInfo) return;
-        toast.info(translateCurrent("notifications.update.availableTitle", { version: updateInfo.version }), {
-          description: translateCurrent("notifications.update.availableDescription"),
-          action: openSettings
-            ? {
-                label: translateCurrent("notifications.update.viewUpdate"),
-                onClick: () => openSettings("about"),
-              }
-            : undefined,
-          duration: 12000,
-        });
-      })();
-    }
   }, 0);
 }
 
@@ -625,7 +604,7 @@ function App() {
       await useSessionStore.getState().clear();
 
       startupBaseReady = true;
-      runDeferredStartupTasks(handleOpenSettings);
+      runDeferredStartupTasks();
     };
     init().catch((err) => {
       toast.error(t("notifications.app.initFailed"), { description: String(err) });
@@ -957,7 +936,7 @@ function App() {
           resolvedTheme,
           viewMode,
         });
-        runDeferredStartupTasks(handleOpenSettings);
+        runDeferredStartupTasks();
         if (IN_TAURI && !firstScreenShown) {
           firstScreenShown = true;
           void getCurrentWindow().show().catch((err) => logWarn("Failed to show window after first screen", err));

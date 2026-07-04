@@ -29,7 +29,6 @@
         }
       ]
     },
-    "updater:default",
     "process:allow-restart",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",

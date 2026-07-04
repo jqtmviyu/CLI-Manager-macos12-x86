@@ -1,21 +1,7 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState, type ComponentType } from "react";
-import {
-  AlertCircle,
-  AlertTriangle,
-  BookOpen,
-  Check,
-  Download,
-  ExternalLink,
-  Github,
-  Info,
-  RefreshCw,
-  RotateCw,
-  UserRound,
-} from "lucide-react";
+import { BookOpen, Download, ExternalLink, Github, Info, UserRound } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useTerminalStore } from "../../stores/terminalStore";
-import { useUpdateStore } from "../../stores/updateStore";
-import { MarkdownContent } from "../ui/MarkdownContent";
 import { useI18n } from "../../lib/i18n";
 
 const REPOSITORY_URL = "https://github.com/dark-hxx/CLI-Manager";
@@ -66,103 +52,20 @@ function ExternalLinkItem({ icon: Icon, title, description, url }: ExternalLinkI
 }
 
 export function AboutSection() {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const text = (zh: string, en: string) => (language === "zh-CN" ? zh : en);
-  const {
-    currentVersion,
-    checking,
-    updateAvailable,
-    updateInfo,
-    downloading,
-    downloadProgress,
-    downloadTotalBytes,
-    downloadedBytes,
-    readyToInstall,
-    installing,
-    lastCheckedAt,
-    error,
-    releaseFallbackUrl,
-    fetchVersion,
-    checkUpdate,
-    downloadUpdate,
-    installAndRelaunch,
-    reset,
-  } = useUpdateStore();
-  const activeTerminalCount = useTerminalStore((state) =>
-    state.sessions.filter((session) => {
-      const status = state.sessionStatuses[session.id];
-      return status !== "exited" && status !== "error";
-    }).length
-  );
-  const [installConfirmVisible, setInstallConfirmVisible] = useState(false);
+  const [currentVersion, setCurrentVersion] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!currentVersion) {
-      fetchVersion();
-    }
-  }, [currentVersion, fetchVersion]);
-
-  useEffect(() => {
-    if (!readyToInstall) {
-      setInstallConfirmVisible(false);
-    }
-  }, [readyToInstall, updateInfo?.version]);
-
-  const handleCheckUpdate = () => {
-    if (checking || downloading || installing) return;
-    setInstallConfirmVisible(false);
-    checkUpdate();
-  };
-
-  const handleDownloadUpdate = async () => {
-    if (downloading || installing) return;
-    const downloaded = await downloadUpdate();
-    if (downloaded) {
-      setInstallConfirmVisible(true);
-    }
-  };
-
-  const handleOpenReleaseFallback = () => {
-    void openExternalUrl(updateInfo?.downloadUrl ?? releaseFallbackUrl);
-  };
-
-  const handleConfirmInstall = () => {
-    if (installing) return;
-    installAndRelaunch();
-  };
-
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return "";
-    try {
-      return new Date(dateStr).toLocaleDateString(language, {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      });
-    } catch {
-      return dateStr;
-    }
-  };
-
-  const formatBytes = (value: number | null) => {
-    if (!value || value <= 0) return "";
-    const units = ["B", "KB", "MB", "GB"];
-    let size = value;
-    let unitIndex = 0;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex += 1;
-    }
-    return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-  };
-
-  const canDownload = updateAvailable && updateInfo && !downloading && !readyToInstall && !installing;
-  const showLatest = Boolean(lastCheckedAt && !checking && !error && !updateAvailable);
-  const progressLabel = downloadTotalBytes
-    ? `${downloadProgress}%（${formatBytes(downloadedBytes)} / ${formatBytes(downloadTotalBytes)}）`
-    : downloadProgress > 0
-      ? `${downloadProgress}%`
-      : text("正在下载...", "Downloading...");
+    void (async () => {
+      try {
+        const result = await invoke<{ version: string; name: string }>("get_app_version");
+        setCurrentVersion(result.version);
+      } catch (error) {
+        console.error("Failed to fetch version:", error);
+      }
+    })();
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -194,177 +97,34 @@ export function AboutSection() {
       </section>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <div className="text-sm font-semibold text-on-surface">{text("应用更新", "App Updates")}</div>
-
-        <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs text-on-surface-variant">{text("版本号", "Version")}</span>
+        <div className="text-sm font-semibold text-on-surface">{t("about.appInfo.title")}</div>
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-xs text-on-surface-variant">{t("about.appInfo.version")}</span>
           <span className="rounded-md bg-surface-container-high px-2 py-0.5 font-mono text-xs font-semibold text-on-surface">
             V{currentVersion || "---"}
           </span>
         </div>
-
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={handleCheckUpdate}
-            disabled={checking || downloading || installing}
-            className="ui-interactive ui-focus-ring flex items-center gap-1.5 rounded-lg border border-border bg-surface-container-high px-3 py-1.5 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest disabled:cursor-not-allowed disabled:opacity-60"
-            aria-label={checking ? text("检查中", "Checking") : text("检查更新", "Check for Updates")}
-          >
-            {checking ? (
-              <>
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>{text("检查中...", "Checking...")}</span>
-              </>
-            ) : (
-              <>
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span>{text("检查更新", "Check for Updates")}</span>
-              </>
-            )}
-          </button>
-
-          {error && (
-            <div className="flex flex-wrap items-center gap-1 text-xs text-danger">
-              <AlertCircle className="h-3.5 w-3.5" />
-              <span>{error}</span>
-              <button type="button" onClick={handleCheckUpdate} className="ml-1 underline hover:no-underline">
-                {text("重试", "Retry")}
-              </button>
-              <button type="button" onClick={handleOpenReleaseFallback} className="ml-1 underline hover:no-underline">
-                {text("查看 Release", "View Release")}
-              </button>
-            </div>
-          )}
-
-          {showLatest && (
-            <div className="flex items-center gap-1 text-xs text-success">
-              <Check className="h-3.5 w-3.5" />
-              <span>{text("已是最新版本", "Already up to date")}</span>
-            </div>
-          )}
-        </div>
-
-        {updateAvailable && updateInfo && (
-          <div className="mt-3 rounded-xl border border-accent/30 bg-accent/5 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-on-surface">V{updateInfo.version}</span>
-                  <span className="rounded-full bg-success/20 px-2 py-0.5 text-[10px] font-medium text-success">
-                    {text("新版本可用", "New Version Available")}
-                  </span>
-                </div>
-                {updateInfo.releaseDate && (
-                  <div className="mt-1 text-xs text-on-surface-variant">
-                    {text("发布日期：", "Release date: ")}{formatDate(updateInfo.releaseDate)}
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col items-end gap-2">
-                {canDownload && (
-                  <button
-                    type="button"
-                    onClick={handleDownloadUpdate}
-                    className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span>{text("下载更新", "Download Update")}</span>
-                  </button>
-                )}
-                {readyToInstall && !installConfirmVisible && (
-                  <button
-                    type="button"
-                    onClick={() => setInstallConfirmVisible(true)}
-                    className="flex items-center gap-1.5 rounded-lg bg-success px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
-                  >
-                    <RotateCw className="h-3.5 w-3.5" />
-                    <span>{text("安装并重启", "Install and Relaunch")}</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleOpenReleaseFallback}
-                  className="flex items-center gap-1 text-xs text-on-surface-variant underline hover:no-underline"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  <span>{text("查看 Release 页面", "View Release Page")}</span>
-                </button>
-              </div>
-            </div>
-
-            {downloading && (
-              <div className="mt-3 rounded-lg border border-border/60 bg-surface-container-high/60 p-3">
-                <div className="mb-2 flex items-center justify-between text-xs text-on-surface-variant">
-                  <span>{text("正在下载更新", "Downloading update")}</span>
-                  <span>{progressLabel}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-surface-container-highest">
-                  <div
-                    className="h-full rounded-full bg-accent transition-all"
-                    style={{ width: `${downloadProgress}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {readyToInstall && installConfirmVisible && (
-              <div className="mt-3 rounded-lg border border-danger/40 bg-danger/10 p-3">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="mt-0.5 h-4 w-4 flex-none text-danger" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold text-on-surface">{text("确认安装并重启", "Confirm Install and Relaunch")}</div>
-                    <div className="mt-1 text-xs text-on-surface-variant">
-                      {text("安装更新会关闭并重启 CLI-Manager。", "Installing the update will close and relaunch CLI-Manager.")}
-                      {activeTerminalCount > 0
-                        ? text(` 当前仍有 ${activeTerminalCount} 个运行中的终端会话，继续操作会中断其中的任务。`, ` ${activeTerminalCount} terminal sessions are still running and will be interrupted.`)
-                        : text(" 请确认当前工作已保存。", " Make sure current work is saved.")}
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={handleConfirmInstall}
-                        disabled={installing}
-                        className="rounded-lg bg-danger px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {installing ? text("正在安装...", "Installing...") : text("确认安装并重启", "Install and Relaunch")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInstallConfirmVisible(false)}
-                        disabled={installing}
-                        className="rounded-lg border border-border bg-surface-container-high px-3 py-1.5 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {text("稍后", "Later")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {updateInfo.releaseNotes && (
-              <div className="mt-3 border-t border-border/50 pt-3">
-                <div className="mb-1 text-xs font-medium text-on-surface-variant">{text("更新说明", "Release Notes")}</div>
-                <MarkdownContent content={updateInfo.releaseNotes} linkBehavior="open" />
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={reset}
-              disabled={checking || downloading || installing}
-              className="mt-3 text-xs text-on-surface-variant underline hover:no-underline disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {text("稍后提醒", "Remind Me Later")}
-            </button>
-          </div>
-        )}
+        <p className="mt-3 text-xs leading-5 text-on-surface-variant">{t("about.appInfo.releaseDescription")}</p>
+        <button
+          type="button"
+          onClick={() => void openExternalUrl(`${REPOSITORY_URL}/releases`)}
+          className="ui-interactive ui-focus-ring mt-3 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-container-high px-3 py-1.5 text-xs font-medium text-on-surface transition-colors hover:bg-surface-container-highest"
+        >
+          <Download className="h-3.5 w-3.5" />
+          <span>{t("about.appInfo.openReleases")}</span>
+          <ExternalLink className="h-3 w-3 text-on-surface-variant" />
+        </button>
       </section>
 
       <div className="space-y-3">
         <div className="px-1 text-sm font-semibold text-on-surface">{text("项目资源", "Project Resources")}</div>
         <div className="grid gap-3 md:grid-cols-2">
+          <ExternalLinkItem
+            icon={Download}
+            title={t("about.resources.releases.title")}
+            description={t("about.resources.releases.description")}
+            url={`${REPOSITORY_URL}/releases`}
+          />
           <ExternalLinkItem
             icon={Github}
             title={text("Git 开源地址", "Git Repository")}
